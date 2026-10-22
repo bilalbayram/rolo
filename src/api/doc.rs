@@ -1,6 +1,8 @@
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
+use crate::service::deals::DealSort;
+
 /// Top-level OpenAPI metadata; operations are added by the routers.
 #[derive(OpenApi)]
 #[openapi(
@@ -14,6 +16,8 @@ use utoipa::{Modify, OpenApi};
                        it again. Reusing a key for a different request returns 422, and using \
                        it while the first request is still running returns 409."
     ),
+    // Enums used only in query parameters aren't collected automatically.
+    components(schemas(DealSort)),
     modifiers(&BearerAuth),
     security(("bearer" = [])),
     tags(
