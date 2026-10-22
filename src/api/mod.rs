@@ -10,6 +10,7 @@ mod events;
 pub mod extract;
 mod pipelines;
 mod search;
+mod users;
 mod webhooks;
 
 use utoipa::OpenApi;
@@ -26,6 +27,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(pipelines::router())
         .merge(activities::router())
         .merge(search::router())
+        .merge(users::router())
         .merge(events::router())
         .merge(webhooks::router());
     OpenApiRouter::with_openapi(doc::ApiDoc::openapi()).nest("/v1", v1)

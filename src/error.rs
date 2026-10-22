@@ -91,6 +91,8 @@ fn unique_violation_message(message: &str) -> String {
         "a contact with this email already exists".into()
     } else if message.contains("companies_domain_key") {
         "a company with this domain already exists".into()
+    } else if message.contains("users_email_key") {
+        "a user with this email already exists".into()
     } else {
         format!("duplicate value: {message}")
     }

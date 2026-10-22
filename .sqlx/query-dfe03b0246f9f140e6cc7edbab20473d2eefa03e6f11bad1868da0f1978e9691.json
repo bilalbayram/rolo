@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, name, prefix, scope AS \"scope: Scope\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  last_used_at AS \"last_used_at: DateTime<Utc>\",\n                  revoked_at AS \"revoked_at: DateTime<Utc>\"\n           FROM api_keys ORDER BY id",
+  "query": "SELECT id, name, email,\n                  deactivated_at AS \"deactivated_at: DateTime<Utc>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM users WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -9,7 +9,7 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "api_keys",
+            "table": "users",
             "name": "id"
           }
         }
@@ -20,30 +20,30 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "api_keys",
+            "table": "users",
             "name": "name"
           }
         }
       },
       {
-        "name": "prefix",
+        "name": "email",
         "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "api_keys",
-            "name": "prefix"
+            "table": "users",
+            "name": "email"
           }
         }
       },
       {
-        "name": "scope: Scope",
+        "name": "deactivated_at: DateTime<Utc>",
         "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "api_keys",
-            "name": "scope"
+            "table": "users",
+            "name": "deactivated_at"
           }
         }
       },
@@ -53,46 +53,34 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "api_keys",
+            "table": "users",
             "name": "created_at"
           }
         }
       },
       {
-        "name": "last_used_at: DateTime<Utc>",
+        "name": "updated_at: DateTime<Utc>",
         "ordinal": 5,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "api_keys",
-            "name": "last_used_at"
-          }
-        }
-      },
-      {
-        "name": "revoked_at: DateTime<Utc>",
-        "ordinal": 6,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "api_keys",
-            "name": "revoked_at"
+            "table": "users",
+            "name": "updated_at"
           }
         }
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       false,
       false,
       false,
-      false,
-      false,
       true,
-      true
+      false,
+      false
     ]
   },
-  "hash": "c8900a59287ab1b3a2f88035b3df7a68eae73331e75c81db63364c3161f3f7e3"
+  "hash": "dfe03b0246f9f140e6cc7edbab20473d2eefa03e6f11bad1868da0f1978e9691"
 }

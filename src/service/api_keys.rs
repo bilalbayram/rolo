@@ -6,6 +6,7 @@ use sha2::Sha256;
 
 use crate::db::Db;
 use crate::error::{Error, Result};
+use crate::service::users;
 use crate::util;
 
 const TOKEN_PREFIX: &str = "rolo_";
@@ -28,6 +29,8 @@ pub struct ApiKey {
     pub name: String,
     pub prefix: String,
     pub scope: Scope,
+    /// User the key acts as, if any.
+    pub user_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
@@ -47,6 +50,8 @@ impl fmt::Display for Scope {
 pub struct Principal {
     pub key_id: String,
     pub scope: Scope,
+    /// The user the key belongs to: default owner of new records, and `"me"`.
+    pub user_id: Option<String>,
 }
 
 impl Principal {
@@ -64,7 +69,12 @@ fn hash(token: &str) -> String {
 }
 
 /// Returns the stored key and the plaintext token, which is not recoverable later.
-pub async fn create(db: &Db, name: &str, scope: Scope) -> Result<(ApiKey, String)> {
+pub async fn create(
+    db: &Db,
+    name: &str,
+    scope: Scope,
+    user_id: Option<&str>,
+) -> Result<(ApiKey, String)> {
     let mut secret = [0u8; 24];
     rand::fill(&mut secret);
     let token = format!("{TOKEN_PREFIX}{}", hex::encode(secret));
@@ -73,21 +83,26 @@ pub async fn create(db: &Db, name: &str, scope: Scope) -> Result<(ApiKey, String
         name: name.to_string(),
         prefix: token[..TOKEN_PREFIX.len() + 8].to_string(),
         scope,
+        user_id: user_id.map(str::to_owned),
         created_at: Utc::now(),
         last_used_at: None,
         revoked_at: None,
     };
     let token_hash = hash(&token);
+    let mut conn = db.writer.acquire().await?;
+    users::ensure_assignable(&mut conn, user_id).await?;
     sqlx::query!(
-        "INSERT INTO api_keys (id, name, prefix, token_hash, scope, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO api_keys (id, name, prefix, token_hash, scope, user_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
         key.id,
         key.name,
         key.prefix,
         token_hash,
         key.scope,
+        key.user_id,
         key.created_at,
     )
-    .execute(&db.writer)
+    .execute(&mut *conn)
     .await?;
     Ok((key, token))
 }
@@ -95,7 +110,7 @@ pub async fn create(db: &Db, name: &str, scope: Scope) -> Result<(ApiKey, String
 pub async fn list(db: &Db) -> Result<Vec<ApiKey>> {
     Ok(sqlx::query_as!(
         ApiKey,
-        r#"SELECT id, name, prefix, scope AS "scope: Scope",
+        r#"SELECT id, name, prefix, scope AS "scope: Scope", user_id,
                   created_at AS "created_at: DateTime<Utc>",
                   last_used_at AS "last_used_at: DateTime<Utc>",
                   revoked_at AS "revoked_at: DateTime<Utc>"
@@ -126,8 +141,10 @@ pub async fn authenticate(db: &Db, token: &str) -> Result<Principal> {
     }
     let token_hash = hash(token);
     let row = sqlx::query!(
-        r#"SELECT id, scope AS "scope: Scope", last_used_at AS "last_used_at: DateTime<Utc>"
-           FROM api_keys WHERE token_hash = ? AND revoked_at IS NULL"#,
+        r#"SELECT k.id, k.scope AS "scope: Scope", k.user_id,
+                  k.last_used_at AS "last_used_at: DateTime<Utc>"
+           FROM api_keys k LEFT JOIN users u ON u.id = k.user_id
+           WHERE k.token_hash = ? AND k.revoked_at IS NULL AND u.deactivated_at IS NULL"#,
         token_hash,
     )
     .fetch_optional(&db.reader)
@@ -151,5 +168,6 @@ pub async fn authenticate(db: &Db, token: &str) -> Result<Principal> {
     Ok(Principal {
         key_id: row.id,
         scope: row.scope,
+        user_id: row.user_id,
     })
 }

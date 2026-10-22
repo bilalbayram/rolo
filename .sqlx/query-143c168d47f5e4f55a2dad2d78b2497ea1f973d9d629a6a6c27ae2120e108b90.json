@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, scope AS \"scope: Scope\", last_used_at AS \"last_used_at: DateTime<Utc>\"\n           FROM api_keys WHERE token_hash = ? AND revoked_at IS NULL",
+  "query": "SELECT k.id, k.scope AS \"scope: Scope\", k.user_id,\n                  k.last_used_at AS \"last_used_at: DateTime<Utc>\"\n           FROM api_keys k LEFT JOIN users u ON u.id = k.user_id\n           WHERE k.token_hash = ? AND k.revoked_at IS NULL AND u.deactivated_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -26,8 +26,19 @@
         }
       },
       {
-        "name": "last_used_at: DateTime<Utc>",
+        "name": "user_id",
         "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "api_keys",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "name": "last_used_at: DateTime<Utc>",
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -43,8 +54,9 @@
     "nullable": [
       false,
       false,
+      true,
       true
     ]
   },
-  "hash": "2055c45edd0803bbc4afe22fa32b814f83f632e095511b8a2c95f2a63795ddd6"
+  "hash": "143c168d47f5e4f55a2dad2d78b2497ea1f973d9d629a6a6c27ae2120e108b90"
 }

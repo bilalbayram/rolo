@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO activities\n             (id, kind, subject, body, contact_id, company_id, deal_id,\n              occurred_at, due_at, completed_at, owner_id, custom, created_at, updated_at)\n         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 14
+    },
+    "nullable": []
+  },
+  "hash": "50d7a3342d440db0cdfc97f49a01a425ba3b68302ac7152c91bee530defa0ada"
+}

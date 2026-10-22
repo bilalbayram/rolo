@@ -26,6 +26,7 @@ pub enum Destinations {
 
 pub struct TestApp {
     router: Router,
+    db: Db,
     pub token: String,
     pub read_token: String,
     path: PathBuf,
@@ -69,21 +70,34 @@ impl TestApp {
         if let Some(config) = worker {
             delivery::spawn(db.clone(), config, shutdown.clone()).unwrap();
         }
-        let (_, token) = api_keys::create(&db, "test", Scope::Write).await.unwrap();
-        let (_, read_token) = api_keys::create(&db, "test-ro", Scope::Read).await.unwrap();
+        let (_, token) = api_keys::create(&db, "test", Scope::Write, None)
+            .await
+            .unwrap();
+        let (_, read_token) = api_keys::create(&db, "test-ro", Scope::Read, None)
+            .await
+            .unwrap();
         let router = rolo::app(
-            db,
+            db.clone(),
             AppConfig {
                 allowed_hosts: vec![],
             },
         );
         Self {
             router,
+            db,
             token,
             read_token,
             path,
             shutdown,
         }
+    }
+
+    /// A write-scoped API key that acts as `user_id`.
+    pub async fn key_for_user(&self, user_id: &str) -> String {
+        let (_, token) = api_keys::create(&self.db, "user key", Scope::Write, Some(user_id))
+            .await
+            .unwrap();
+        token
     }
 
     pub async fn send(

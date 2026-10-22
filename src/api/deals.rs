@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -8,6 +8,7 @@ use crate::AppState;
 use crate::api::extract::{Body, Id, Params};
 use crate::error::{ErrorBody, Result};
 use crate::service::Page;
+use crate::service::api_keys::Principal;
 use crate::service::deals::{self, Deal, DealPatch, DealQuery, NewDeal};
 
 pub fn router() -> OpenApiRouter<AppState> {
@@ -23,9 +24,10 @@ pub fn router() -> OpenApiRouter<AppState> {
     responses((status = 200, body = Page<Deal>)))]
 async fn list(
     State(state): State<AppState>,
+    Extension(caller): Extension<Principal>,
     Params(query): Params<DealQuery>,
 ) -> Result<Json<Page<Deal>>> {
-    Ok(Json(deals::list(&state.db, query).await?))
+    Ok(Json(deals::list(&state.db, &caller, query).await?))
 }
 
 /// Create a deal
@@ -33,11 +35,12 @@ async fn list(
     responses((status = 201, body = Deal), (status = 409, body = ErrorBody), (status = 422, body = ErrorBody)))]
 async fn create(
     State(state): State<AppState>,
+    Extension(caller): Extension<Principal>,
     Body(input): Body<NewDeal>,
 ) -> Result<(StatusCode, Json<Deal>)> {
     Ok((
         StatusCode::CREATED,
-        Json(deals::create(&state.db, input).await?),
+        Json(deals::create(&state.db, &caller, input).await?),
     ))
 }
 
@@ -56,10 +59,11 @@ async fn get(State(state): State<AppState>, Id(id): Id) -> Result<Json<Deal>> {
     responses((status = 200, body = Deal), (status = 404, body = ErrorBody), (status = 409, body = ErrorBody), (status = 422, body = ErrorBody)))]
 async fn update(
     State(state): State<AppState>,
+    Extension(caller): Extension<Principal>,
     Id(id): Id,
     Body(patch): Body<DealPatch>,
 ) -> Result<Json<Deal>> {
-    Ok(Json(deals::update(&state.db, &id, patch).await?))
+    Ok(Json(deals::update(&state.db, &caller, &id, patch).await?))
 }
 
 /// Delete a deal

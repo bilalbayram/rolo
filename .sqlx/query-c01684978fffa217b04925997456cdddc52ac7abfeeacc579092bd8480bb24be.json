@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO deals\n             (id, title, amount, currency, stage_id, company_id, contact_id,\n              expected_close_date, closed_at, owner_id, custom, created_at, updated_at)\n         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "c01684978fffa217b04925997456cdddc52ac7abfeeacc579092bd8480bb24be"
+}

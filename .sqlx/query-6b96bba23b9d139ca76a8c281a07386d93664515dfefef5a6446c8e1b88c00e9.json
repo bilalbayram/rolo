@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT d.id, d.title, d.amount, d.currency,\n                  s.pipeline_id, d.stage_id, s.kind AS \"status: StageKind\",\n                  d.company_id, d.contact_id,\n                  d.expected_close_date AS \"expected_close_date: NaiveDate\",\n                  d.closed_at AS \"closed_at: DateTime<Utc>\",\n                  d.custom AS \"custom: Json<CustomFields>\",\n                  d.created_at AS \"created_at: DateTime<Utc>\",\n                  d.updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM deals d JOIN stages s ON s.id = d.stage_id\n           WHERE d.id = ?",
+  "query": "SELECT d.id, d.title, d.amount, d.currency,\n                  s.pipeline_id, d.stage_id, s.kind AS \"status: StageKind\",\n                  d.company_id, d.contact_id,\n                  d.expected_close_date AS \"expected_close_date: NaiveDate\",\n                  d.closed_at AS \"closed_at: DateTime<Utc>\",\n                  d.owner_id,\n                  d.custom AS \"custom: Json<CustomFields>\",\n                  d.created_at AS \"created_at: DateTime<Utc>\",\n                  d.updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM deals d JOIN stages s ON s.id = d.stage_id\n           WHERE (?1 IS NULL OR d.id IN (\n                      SELECT sd.entity_id FROM search_index\n                      JOIN search_documents sd ON sd.rowid = search_index.rowid\n                      WHERE search_index MATCH ?1))\n             AND (?2 IS NULL OR s.pipeline_id = ?2)\n             AND (?3 IS NULL OR d.stage_id = ?3)\n             AND (?4 IS NULL OR s.kind = ?4)\n             AND (?5 IS NULL OR d.company_id = ?5)\n             AND (?6 IS NULL OR d.contact_id = ?6)\n             AND (?7 IS NULL OR d.owner_id = ?7 OR (?7 = ?8 AND d.owner_id IS NULL))\n             AND (?9 IS NULL OR d.id > ?9)\n           ORDER BY d.id\n           LIMIT ?10",
   "describe": {
     "columns": [
       {
@@ -125,8 +125,19 @@
         }
       },
       {
-        "name": "custom: Json<CustomFields>",
+        "name": "owner_id",
         "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "deals",
+            "name": "owner_id"
+          }
+        }
+      },
+      {
+        "name": "custom: Json<CustomFields>",
+        "ordinal": 12,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -137,7 +148,7 @@
       },
       {
         "name": "created_at: DateTime<Utc>",
-        "ordinal": 12,
+        "ordinal": 13,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -148,7 +159,7 @@
       },
       {
         "name": "updated_at: DateTime<Utc>",
-        "ordinal": 13,
+        "ordinal": 14,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -159,7 +170,7 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 10
     },
     "nullable": [
       false,
@@ -173,10 +184,11 @@
       true,
       true,
       true,
+      true,
       false,
       false,
       false
     ]
   },
-  "hash": "faf0efcaea479b083349ab87f4e44d9db3d1f8e09c71ca1d75f9b779497dcf48"
+  "hash": "6b96bba23b9d139ca76a8c281a07386d93664515dfefef5a6446c8e1b88c00e9"
 }

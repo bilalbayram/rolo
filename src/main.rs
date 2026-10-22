@@ -7,6 +7,7 @@ use rolo::AppConfig;
 use rolo::db::Db;
 use rolo::delivery::{self, WorkerConfig};
 use rolo::service::api_keys::{self, Scope};
+use rolo::service::users;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
@@ -44,6 +45,9 @@ enum Command {
     /// Manage API keys.
     #[command(subcommand)]
     Keys(KeysCommand),
+    /// Manage users.
+    #[command(subcommand)]
+    Users(UsersCommand),
     /// Write a consistent snapshot of the database to a new file. Safe while
     /// the server is running. See docs/backup.md for continuous backups.
     Backup {
@@ -62,11 +66,28 @@ enum KeysCommand {
         name: String,
         #[arg(long, value_enum, default_value = "write")]
         scope: Scope,
+        /// User the key acts as: new records default to being owned by them,
+        /// and "me" refers to them.
+        #[arg(long)]
+        user: Option<String>,
     },
     /// List keys.
     List,
     /// Revoke a key by id.
     Revoke { id: String },
+}
+
+#[derive(Subcommand)]
+enum UsersCommand {
+    /// Create a user and print their ID.
+    Create {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        email: String,
+    },
+    /// List users, including deactivated ones.
+    List,
 }
 
 #[tokio::main]
@@ -87,6 +108,7 @@ async fn main() -> anyhow::Result<()> {
             allow_private_webhooks,
         } => serve(&cli.db, addr, allowed_hosts, allow_private_webhooks).await?,
         Command::Keys(command) => keys(&cli.db, command).await?,
+        Command::Users(command) => users(&cli.db, command).await?,
         Command::Backup { destination } => backup(&cli.db, &destination).await?,
     }
     Ok(())
@@ -126,8 +148,8 @@ async fn serve(
 async fn keys(path: &Path, command: KeysCommand) -> anyhow::Result<()> {
     let db = open(path).await?;
     match command {
-        KeysCommand::Create { name, scope } => {
-            let (key, token) = api_keys::create(&db, &name, scope).await?;
+        KeysCommand::Create { name, scope, user } => {
+            let (key, token) = api_keys::create(&db, &name, scope, user.as_deref()).await?;
             eprintln!(
                 "Created {scope} key {} ({}). Store the token now; it won't be shown again:",
                 key.id, key.name
@@ -144,15 +166,40 @@ async fn keys(path: &Path, command: KeysCommand) -> anyhow::Result<()> {
                     Some(at) => at.format("%Y-%m-%d %H:%M").to_string(),
                     None => "never".into(),
                 };
+                let user = key.user_id.as_deref().unwrap_or("-");
                 println!(
-                    "{}  {}…  {:<5}  {:<14}  last used {}  {}",
-                    key.id, key.prefix, key.scope, status, last_used, key.name
+                    "{}  {}…  {:<5}  {:<14}  {:<30}  last used {}  {}",
+                    key.id, key.prefix, key.scope, status, user, last_used, key.name
                 );
             }
         }
         KeysCommand::Revoke { id } => {
             api_keys::revoke(&db, &id).await?;
             eprintln!("Revoked {id}");
+        }
+    }
+    Ok(())
+}
+
+async fn users(path: &Path, command: UsersCommand) -> anyhow::Result<()> {
+    let db = open(path).await?;
+    match command {
+        UsersCommand::Create { name, email } => {
+            let user = users::create(&db, users::NewUser { name, email }).await?;
+            eprintln!("Created user {} <{}>", user.name, user.email);
+            println!("{}", user.id);
+        }
+        UsersCommand::List => {
+            let query = users::UserQuery {
+                include_deactivated: true,
+            };
+            for user in users::list(&db, query).await? {
+                let status = match user.deactivated_at {
+                    Some(at) => format!("deactivated {}", at.format("%Y-%m-%d")),
+                    None => "active".into(),
+                };
+                println!("{}  {:<20}  {}  {}", user.id, status, user.email, user.name);
+            }
         }
     }
     Ok(())

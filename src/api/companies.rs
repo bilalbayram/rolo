@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -8,6 +8,7 @@ use crate::AppState;
 use crate::api::extract::{Body, Id, Params};
 use crate::error::{ErrorBody, Result};
 use crate::service::Page;
+use crate::service::api_keys::Principal;
 use crate::service::companies::{self, Company, CompanyPatch, CompanyQuery, NewCompany};
 
 pub fn router() -> OpenApiRouter<AppState> {
@@ -21,9 +22,10 @@ pub fn router() -> OpenApiRouter<AppState> {
     responses((status = 200, body = Page<Company>)))]
 async fn list(
     State(state): State<AppState>,
+    Extension(caller): Extension<Principal>,
     Params(query): Params<CompanyQuery>,
 ) -> Result<Json<Page<Company>>> {
-    Ok(Json(companies::list(&state.db, query).await?))
+    Ok(Json(companies::list(&state.db, &caller, query).await?))
 }
 
 /// Create a company
@@ -31,11 +33,12 @@ async fn list(
     responses((status = 201, body = Company), (status = 409, body = ErrorBody), (status = 422, body = ErrorBody)))]
 async fn create(
     State(state): State<AppState>,
+    Extension(caller): Extension<Principal>,
     Body(input): Body<NewCompany>,
 ) -> Result<(StatusCode, Json<Company>)> {
     Ok((
         StatusCode::CREATED,
-        Json(companies::create(&state.db, input).await?),
+        Json(companies::create(&state.db, &caller, input).await?),
     ))
 }
 
@@ -52,10 +55,13 @@ async fn get(State(state): State<AppState>, Id(id): Id) -> Result<Json<Company>>
     responses((status = 200, body = Company), (status = 404, body = ErrorBody), (status = 409, body = ErrorBody), (status = 422, body = ErrorBody)))]
 async fn update(
     State(state): State<AppState>,
+    Extension(caller): Extension<Principal>,
     Id(id): Id,
     Body(patch): Body<CompanyPatch>,
 ) -> Result<Json<Company>> {
-    Ok(Json(companies::update(&state.db, &id, patch).await?))
+    Ok(Json(
+        companies::update(&state.db, &caller, &id, patch).await?,
+    ))
 }
 
 /// Delete a company

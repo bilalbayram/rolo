@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, kind AS \"kind: ActivityKind\", subject, body, contact_id, company_id, deal_id,\n                  occurred_at AS \"occurred_at: DateTime<Utc>\",\n                  due_at AS \"due_at: DateTime<Utc>\",\n                  completed_at AS \"completed_at: DateTime<Utc>\",\n                  custom AS \"custom: Json<CustomFields>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM activities\n           WHERE (?1 IS NULL OR id IN (\n                      SELECT d.entity_id FROM search_index\n                      JOIN search_documents d ON d.rowid = search_index.rowid\n                      WHERE search_index MATCH ?1))\n             AND (?2 IS NULL OR contact_id = ?2)\n             AND (?3 IS NULL OR company_id = ?3)\n             AND (?4 IS NULL OR deal_id = ?4)\n             AND (?5 IS NULL OR kind = ?5)\n             AND (?6 IS NULL OR (?6 = (completed_at IS NULL) AND kind = 'task'))\n             AND (?7 IS NULL OR id < ?7)\n           ORDER BY id DESC\n           LIMIT ?8",
+  "query": "SELECT id, kind AS \"kind: ActivityKind\", subject, body, contact_id, company_id, deal_id,\n                  occurred_at AS \"occurred_at: DateTime<Utc>\",\n                  due_at AS \"due_at: DateTime<Utc>\",\n                  completed_at AS \"completed_at: DateTime<Utc>\",\n                  owner_id,\n                  custom AS \"custom: Json<CustomFields>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM activities WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -114,8 +114,19 @@
         }
       },
       {
-        "name": "custom: Json<CustomFields>",
+        "name": "owner_id",
         "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "owner_id"
+          }
+        }
+      },
+      {
+        "name": "custom: Json<CustomFields>",
+        "ordinal": 11,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -126,7 +137,7 @@
       },
       {
         "name": "created_at: DateTime<Utc>",
-        "ordinal": 11,
+        "ordinal": 12,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -137,7 +148,7 @@
       },
       {
         "name": "updated_at: DateTime<Utc>",
-        "ordinal": 12,
+        "ordinal": 13,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -148,7 +159,7 @@
       }
     ],
     "parameters": {
-      "Right": 8
+      "Right": 1
     },
     "nullable": [
       false,
@@ -161,10 +172,11 @@
       false,
       true,
       true,
+      true,
       false,
       false,
       false
     ]
   },
-  "hash": "707ef79ff5938175a7c2b703171b5f021405440fb68ffbdcd1ae9fcb9d188ba9"
+  "hash": "3d7978adf7552061eeedca6da674c9c9ee1d912c6f759e5d94b9c21e101f1705"
 }

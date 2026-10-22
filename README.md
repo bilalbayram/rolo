@@ -50,7 +50,7 @@ claude mcp add --transport http rolo http://127.0.0.1:3000/mcp \
   --header "Authorization: Bearer $TOKEN"
 ```
 
-Tools: `search`, `search_contacts`, `get_contact`, `create_contact`, `update_contact`,
+Tools: `search`, `list_users`, `search_contacts`, `get_contact`, `create_contact`, `update_contact`,
 `search_companies`, `get_company`, `create_company`, `update_company`,
 `list_pipelines`, `search_deals`, `get_deal`, `create_deal`, `update_deal`,
 `list_activities`, `log_activity`, `update_activity`.
@@ -59,16 +59,26 @@ The `get_*` tools return a record with its context (company, deals, recent
 activity) so an agent needs fewer round trips. There are no delete tools on
 purpose; deletes are REST-only.
 
-## API keys
+## API keys and users
 
 ```sh
-rolo keys create --name zapier --scope read   # read | write (default)
+rolo users create --name "Ada Lovelace" --email ada@example.com   # prints usr_...
+rolo keys create --name ada-agent --user usr_...    # key acting as Ada
+rolo keys create --name zapier --scope read         # read | write (default); no user
 rolo keys list
 rolo keys revoke key_01...
 ```
 
 Keys are stored as SHA-256 hashes. `read` keys can call GET endpoints and
 read-only MCP tools; mutations return `403 forbidden`.
+
+Contacts, companies, deals and activities have an `owner_id` (for tasks, the
+assignee):
+
+- **Default owner:** a record created with a key that belongs to a user is owned by that user, unless the request sets `owner_id` (`null` means no owner).
+- **`"me"`** means the key's user anywhere an owner is accepted, including filters. For example, `GET /v1/activities?owner_id=me&open=true` lists your open tasks, and `owner_id=none` finds unowned records.
+- **Deactivating a user** (`PATCH /v1/users/{id} {"deactivated": true}`) keeps their records, blocks assigning new ones to them, and disables their keys. Deleting a user unowns their records and revokes their keys.
+- **For agents:** `GET /v1/users/me` and the `list_users` MCP tool tell an agent who it is acting as.
 
 ## Data model
 
@@ -79,6 +89,7 @@ read-only MCP tools; mutations return `403 forbidden`.
 | Pipeline / Stage | `pip_` / `stg_` | stages are `open`, `won` or `lost`; a default "Sales" pipeline is created |
 | Deal | `deal_` | `amount` in minor units (cents); entering a won/lost stage sets `closed_at` |
 | Activity | `act_` | `note`, `call`, `email`, `meeting` or `task`; links to a contact, company and/or deal |
+| User | `usr_` | owns records; `email` is unique; can be deactivated |
 
 - IDs are ULIDs, so they sort by creation time.
 - Every record has `custom`, a free-form JSON object. PATCH merges it, and setting a key to `null` removes that key.
@@ -166,4 +177,3 @@ over it. `src/delivery.rs` is the webhook worker. Migrations live in `migrations
 ## Roadmap
 
 - Custom field definitions (typed and validated) on top of `custom`
-- Users / record owners

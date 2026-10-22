@@ -10,6 +10,7 @@ pub mod events;
 mod page;
 pub mod pipelines;
 pub mod search;
+pub mod users;
 pub mod webhooks;
 
 pub use page::Page;

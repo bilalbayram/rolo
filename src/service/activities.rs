@@ -5,7 +5,8 @@ use sqlx::SqliteExecutor;
 use sqlx::types::Json;
 use utoipa::{IntoParams, ToSchema};
 
-use super::{Page, events};
+use super::api_keys::Principal;
+use super::{Page, events, users};
 use crate::custom_fields::CustomFields;
 use crate::db::Db;
 use crate::error::{Error, Result};
@@ -41,6 +42,8 @@ pub struct Activity {
     pub due_at: Option<DateTime<Utc>>,
     /// For tasks: when it was done. Null means open.
     pub completed_at: Option<DateTime<Utc>>,
+    /// User responsible for it; for tasks, the assignee.
+    pub owner_id: Option<String>,
     #[schema(value_type = Object)]
     #[schemars(with = "CustomFields")]
     pub custom: Json<CustomFields>,
@@ -49,7 +52,7 @@ pub struct Activity {
 }
 
 /// Link to at least one of `contact_id`, `company_id` or `deal_id`.
-#[derive(Debug, Deserialize, ToSchema, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, ToSchema, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewActivity {
     pub kind: ActivityKind,
@@ -62,6 +65,10 @@ pub struct NewActivity {
     pub occurred_at: Option<DateTime<Utc>>,
     pub due_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
+    /// User ID or `"me"` (for tasks, the assignee). Omit to default to the API
+    /// key's user; null for no owner.
+    #[serde(default, deserialize_with = "util::double_option")]
+    pub owner_id: Option<Option<String>>,
     /// Arbitrary user-defined fields.
     #[serde(default)]
     #[schema(value_type = Object)]
@@ -69,7 +76,7 @@ pub struct NewActivity {
 }
 
 /// Omitted fields are left unchanged; nullable fields set to null are cleared.
-#[derive(Debug, Default, Deserialize, ToSchema, JsonSchema)]
+#[derive(Debug, Clone, Default, Deserialize, ToSchema, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ActivityPatch {
     pub kind: Option<ActivityKind>,
@@ -89,12 +96,15 @@ pub struct ActivityPatch {
     /// Set to mark a task done, null to reopen it.
     #[serde(default, deserialize_with = "util::double_option")]
     pub completed_at: Option<Option<DateTime<Utc>>>,
+    /// User ID or `"me"`; for tasks, the assignee.
+    #[serde(default, deserialize_with = "util::double_option")]
+    pub owner_id: Option<Option<String>>,
     /// Merged into existing custom fields; keys set to null are removed.
     #[schema(value_type = Option<Object>)]
     pub custom: Option<CustomFields>,
 }
 
-#[derive(Debug, Default, Deserialize, IntoParams, JsonSchema)]
+#[derive(Debug, Clone, Default, Deserialize, IntoParams, JsonSchema)]
 #[into_params(parameter_in = Query)]
 pub struct ActivityQuery {
     /// Full-text search: every word must match as a prefix, e.g. `budget rob`.
@@ -106,6 +116,9 @@ pub struct ActivityQuery {
     pub kind: Option<ActivityKind>,
     /// true: only incomplete tasks; false: only completed ones.
     pub open: Option<bool>,
+    /// A user ID, `me`, or `none` for unassigned. With `open=true`, `owner_id=me`
+    /// lists your outstanding tasks.
+    pub owner_id: Option<String>,
     /// 1-200, default 50.
     pub limit: Option<i64>,
     /// `next_cursor` from the previous page.
@@ -129,6 +142,7 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Activity
                   occurred_at AS "occurred_at: DateTime<Utc>",
                   due_at AS "due_at: DateTime<Utc>",
                   completed_at AS "completed_at: DateTime<Utc>",
+                  owner_id,
                   custom AS "custom: Json<CustomFields>",
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
@@ -141,13 +155,14 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Activity
 }
 
 /// Newest first.
-pub async fn list(db: &Db, query: ActivityQuery) -> Result<Page<Activity>> {
+pub async fn list(db: &Db, caller: &Principal, query: ActivityQuery) -> Result<Page<Activity>> {
     let limit = util::clamp_limit(query.limit);
     let search = match Filter::from_query(query.q) {
         Filter::All => None,
         Filter::Matching(expression) => Some(expression),
         Filter::Nothing => return Ok(Page::empty()),
     };
+    let owner_id = users::resolve_me(query.owner_id, caller)?;
     let fetch = limit + 1;
     let rows = sqlx::query_as!(
         Activity,
@@ -155,6 +170,7 @@ pub async fn list(db: &Db, query: ActivityQuery) -> Result<Page<Activity>> {
                   occurred_at AS "occurred_at: DateTime<Utc>",
                   due_at AS "due_at: DateTime<Utc>",
                   completed_at AS "completed_at: DateTime<Utc>",
+                  owner_id,
                   custom AS "custom: Json<CustomFields>",
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
@@ -168,15 +184,18 @@ pub async fn list(db: &Db, query: ActivityQuery) -> Result<Page<Activity>> {
              AND (?4 IS NULL OR deal_id = ?4)
              AND (?5 IS NULL OR kind = ?5)
              AND (?6 IS NULL OR (?6 = (completed_at IS NULL) AND kind = 'task'))
-             AND (?7 IS NULL OR id < ?7)
+             AND (?7 IS NULL OR owner_id = ?7 OR (?7 = ?8 AND owner_id IS NULL))
+             AND (?9 IS NULL OR id < ?9)
            ORDER BY id DESC
-           LIMIT ?8"#,
+           LIMIT ?10"#,
         search,
         query.contact_id,
         query.company_id,
         query.deal_id,
         query.kind,
         query.open,
+        owner_id,
+        users::NO_OWNER,
         query.cursor,
         fetch,
     )
@@ -185,7 +204,7 @@ pub async fn list(db: &Db, query: ActivityQuery) -> Result<Page<Activity>> {
     Ok(util::paginate(rows, limit, |a| &a.id))
 }
 
-pub async fn create(db: &Db, input: NewActivity) -> Result<Activity> {
+pub async fn create(db: &Db, caller: &Principal, input: NewActivity) -> Result<Activity> {
     let now = Utc::now();
     let activity = Activity {
         id: util::new_id("act"),
@@ -198,6 +217,7 @@ pub async fn create(db: &Db, input: NewActivity) -> Result<Activity> {
         occurred_at: input.occurred_at.unwrap_or(now),
         due_at: input.due_at,
         completed_at: input.completed_at,
+        owner_id: users::owner_for_new(input.owner_id, caller)?,
         custom: Json(input.custom),
         created_at: now,
         updated_at: now,
@@ -205,11 +225,12 @@ pub async fn create(db: &Db, input: NewActivity) -> Result<Activity> {
     validate(&activity)?;
 
     let mut tx = db.writer.begin().await?;
+    users::ensure_assignable(&mut tx, activity.owner_id.as_deref()).await?;
     sqlx::query!(
         "INSERT INTO activities
              (id, kind, subject, body, contact_id, company_id, deal_id,
-              occurred_at, due_at, completed_at, custom, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              occurred_at, due_at, completed_at, owner_id, custom, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         activity.id,
         activity.kind,
         activity.subject,
@@ -220,6 +241,7 @@ pub async fn create(db: &Db, input: NewActivity) -> Result<Activity> {
         activity.occurred_at,
         activity.due_at,
         activity.completed_at,
+        activity.owner_id,
         activity.custom,
         activity.created_at,
         activity.updated_at,
@@ -231,7 +253,13 @@ pub async fn create(db: &Db, input: NewActivity) -> Result<Activity> {
     Ok(activity)
 }
 
-pub async fn update(db: &Db, id: &str, patch: ActivityPatch) -> Result<Activity> {
+pub async fn update(
+    db: &Db,
+    caller: &Principal,
+    id: &str,
+    patch: ActivityPatch,
+) -> Result<Activity> {
+    let owner_id = users::owner_patch(patch.owner_id, caller)?;
     let mut tx = db.writer.begin().await?;
     let mut activity = get(&mut *tx, id).await?;
     if let Some(kind) = patch.kind {
@@ -253,6 +281,10 @@ pub async fn update(db: &Db, id: &str, patch: ActivityPatch) -> Result<Activity>
     }
     util::patch(&mut activity.due_at, patch.due_at);
     util::patch(&mut activity.completed_at, patch.completed_at);
+    if let Some(owner_id) = owner_id {
+        users::ensure_assignable(&mut tx, owner_id.as_deref()).await?;
+        activity.owner_id = owner_id;
+    }
     if let Some(update) = patch.custom {
         activity.custom.merge(update);
     }
@@ -262,7 +294,8 @@ pub async fn update(db: &Db, id: &str, patch: ActivityPatch) -> Result<Activity>
     sqlx::query!(
         "UPDATE activities
          SET kind = ?, subject = ?, body = ?, contact_id = ?, company_id = ?, deal_id = ?,
-             occurred_at = ?, due_at = ?, completed_at = ?, custom = ?, updated_at = ?
+             occurred_at = ?, due_at = ?, completed_at = ?, owner_id = ?, custom = ?,
+             updated_at = ?
          WHERE id = ?",
         activity.kind,
         activity.subject,
@@ -273,6 +306,7 @@ pub async fn update(db: &Db, id: &str, patch: ActivityPatch) -> Result<Activity>
         activity.occurred_at,
         activity.due_at,
         activity.completed_at,
+        activity.owner_id,
         activity.custom,
         activity.updated_at,
         id,

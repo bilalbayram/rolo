@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE activities\n         SET kind = ?, subject = ?, body = ?, contact_id = ?, company_id = ?, deal_id = ?,\n             occurred_at = ?, due_at = ?, completed_at = ?, owner_id = ?, custom = ?,\n             updated_at = ?\n         WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "0fef81237a1fa7764612596003701eb523338dfb99e90e8f4f6a1cfcbe7c51b3"
+}

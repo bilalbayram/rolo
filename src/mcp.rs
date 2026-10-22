@@ -21,13 +21,14 @@ use crate::service::contacts::{self, Contact, ContactPatch, ContactQuery, NewCon
 use crate::service::deals::{self, Deal, DealPatch, DealQuery, NewDeal};
 use crate::service::pipelines::{self, Pipeline};
 use crate::service::search::{self, EntityType, SearchResults};
+use crate::service::users::{self, User, UserQuery};
 
 const INSTRUCTIONS: &str = "\
 rolo is a CRM. Records: companies, contacts (people, optionally at a company), \
 deals (opportunities moving through pipeline stages), and activities (notes, calls, \
 emails, meetings and tasks linked to contacts, companies and/or deals).
 
-- IDs are prefixed: com_, con_, deal_, act_, pip_, stg_.
+- IDs are prefixed: com_, con_, deal_, act_, pip_, stg_, usr_.
 - Use `search` to find anything by name, email, domain or words in notes, then \
 fetch details with get_contact / get_company / get_deal.
 - Search before creating to avoid duplicates; emails and company domains are unique.
@@ -35,6 +36,10 @@ fetch details with get_contact / get_company / get_deal.
 - Call list_pipelines to find stage IDs; move a deal with update_deal + stage_id.
 - Log what you did or learned with log_activity; create follow-ups as kind=task \
 with due_at, and complete them with update_activity + completed_at.
+- Records have an owner_id (for tasks, the assignee). New records default to the \
+user this API key belongs to; `\"me\"` means that user anywhere an owner is accepted, \
+so list_activities with owner_id=\"me\" and open=true lists your tasks. Call \
+list_users to find other users.
 - Every record has `custom`, a free-form object for extra fields.";
 
 type ToolResult<T> = Result<Json<T>, String>;
@@ -65,6 +70,14 @@ pub struct Update<P> {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct PipelineList {
     pub pipelines: Vec<Pipeline>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct UserList {
+    /// Active users, by name.
+    pub users: Vec<User>,
+    /// The user this API key belongs to (`"me"`), if any.
+    pub me: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -101,13 +114,19 @@ fn fail(err: Error) -> String {
     format!("{}: {err}", err.code())
 }
 
-fn require_write(parts: &Parts) -> Result<(), String> {
+/// The authenticated caller, attached by the auth middleware.
+fn caller(parts: &Parts) -> Result<&Principal, String> {
     parts
         .extensions
         .get::<Principal>()
-        .ok_or(Error::Unauthorized)
-        .and_then(|p| p.require_write())
-        .map_err(fail)
+        .ok_or_else(|| fail(Error::Unauthorized))
+}
+
+/// The caller, if their key may modify data.
+fn writer(parts: &Parts) -> Result<&Principal, String> {
+    let caller = caller(parts)?;
+    caller.require_write().map_err(fail)?;
+    Ok(caller)
 }
 
 #[derive(Clone)]
@@ -124,12 +143,16 @@ impl RoloMcp {
         }
     }
 
-    async fn recent_activities(&self, query: ActivityQuery) -> Result<Vec<Activity>, Error> {
+    async fn recent_activities(
+        &self,
+        caller: &Principal,
+        query: ActivityQuery,
+    ) -> Result<Vec<Activity>, Error> {
         let query = ActivityQuery {
             limit: Some(20),
             ..query
         };
-        Ok(activities::list(&self.db, query).await?.data)
+        Ok(activities::list(&self.db, caller, query).await?.data)
     }
 }
 
@@ -148,13 +171,28 @@ impl RoloMcp {
             .map_err(fail)
     }
 
-    /// Search contacts by name, email or phone, optionally within a company.
+    /// List active users (for owner_id), and which one this API key acts as.
+    #[tool(annotations(read_only_hint = true))]
+    async fn list_users(&self, Extension(parts): Extension<Parts>) -> ToolResult<UserList> {
+        let caller = caller(&parts)?;
+        let users = users::list(&self.db, UserQuery::default())
+            .await
+            .map_err(fail)?;
+        Ok(Json(UserList {
+            users,
+            me: caller.user_id.clone(),
+        }))
+    }
+
+    /// Search contacts by name, email, phone or custom fields, optionally within a
+    /// company or by owner.
     #[tool(annotations(read_only_hint = true))]
     async fn search_contacts(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(query): Parameters<ContactQuery>,
     ) -> ToolResult<Page<Contact>> {
-        contacts::list(&self.db, query)
+        contacts::list(&self.db, caller(&parts)?, query)
             .await
             .map(Json)
             .map_err(fail)
@@ -164,29 +202,26 @@ impl RoloMcp {
     #[tool(annotations(read_only_hint = true))]
     async fn get_contact(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(IdParam { id }): Parameters<IdParam>,
     ) -> ToolResult<ContactDetails> {
+        let caller = caller(&parts)?;
         let details = async {
             let contact = contacts::get(&self.db.reader, &id).await?;
             let company = match &contact.company_id {
                 Some(company_id) => Some(companies::get(&self.db.reader, company_id).await?),
                 None => None,
             };
-            let deals = deals::list(
-                &self.db,
-                DealQuery {
-                    contact_id: Some(id.clone()),
-                    ..Default::default()
-                },
-            )
-            .await?
-            .data;
-            let recent_activities = self
-                .recent_activities(ActivityQuery {
-                    contact_id: Some(id.clone()),
-                    ..Default::default()
-                })
-                .await?;
+            let deals_query = DealQuery {
+                contact_id: Some(id.clone()),
+                ..Default::default()
+            };
+            let deals = deals::list(&self.db, caller, deals_query).await?.data;
+            let activities_query = ActivityQuery {
+                contact_id: Some(id.clone()),
+                ..Default::default()
+            };
+            let recent_activities = self.recent_activities(caller, activities_query).await?;
             Ok(ContactDetails {
                 contact,
                 company,
@@ -204,8 +239,7 @@ impl RoloMcp {
         Extension(parts): Extension<Parts>,
         Parameters(input): Parameters<NewContact>,
     ) -> ToolResult<Contact> {
-        require_write(&parts)?;
-        contacts::create(&self.db, input)
+        contacts::create(&self.db, writer(&parts)?, input)
             .await
             .map(Json)
             .map_err(fail)
@@ -218,20 +252,20 @@ impl RoloMcp {
         Extension(parts): Extension<Parts>,
         Parameters(Update { id, changes }): Parameters<Update<ContactPatch>>,
     ) -> ToolResult<Contact> {
-        require_write(&parts)?;
-        contacts::update(&self.db, &id, changes)
+        contacts::update(&self.db, writer(&parts)?, &id, changes)
             .await
             .map(Json)
             .map_err(fail)
     }
 
-    /// Search companies by name or domain.
+    /// Search companies by name, domain or custom fields, optionally by owner.
     #[tool(annotations(read_only_hint = true))]
     async fn search_companies(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(query): Parameters<CompanyQuery>,
     ) -> ToolResult<Page<Company>> {
-        companies::list(&self.db, query)
+        companies::list(&self.db, caller(&parts)?, query)
             .await
             .map(Json)
             .map_err(fail)
@@ -241,34 +275,27 @@ impl RoloMcp {
     #[tool(annotations(read_only_hint = true))]
     async fn get_company(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(IdParam { id }): Parameters<IdParam>,
     ) -> ToolResult<CompanyDetails> {
+        let caller = caller(&parts)?;
         let details = async {
             let company = companies::get(&self.db.reader, &id).await?;
-            let contacts = contacts::list(
-                &self.db,
-                ContactQuery {
-                    company_id: Some(id.clone()),
-                    ..Default::default()
-                },
-            )
-            .await?
-            .data;
-            let deals = deals::list(
-                &self.db,
-                DealQuery {
-                    company_id: Some(id.clone()),
-                    ..Default::default()
-                },
-            )
-            .await?
-            .data;
-            let recent_activities = self
-                .recent_activities(ActivityQuery {
-                    company_id: Some(id.clone()),
-                    ..Default::default()
-                })
-                .await?;
+            let contacts_query = ContactQuery {
+                company_id: Some(id.clone()),
+                ..Default::default()
+            };
+            let contacts = contacts::list(&self.db, caller, contacts_query).await?.data;
+            let deals_query = DealQuery {
+                company_id: Some(id.clone()),
+                ..Default::default()
+            };
+            let deals = deals::list(&self.db, caller, deals_query).await?.data;
+            let activities_query = ActivityQuery {
+                company_id: Some(id.clone()),
+                ..Default::default()
+            };
+            let recent_activities = self.recent_activities(caller, activities_query).await?;
             Ok(CompanyDetails {
                 company,
                 contacts,
@@ -286,8 +313,7 @@ impl RoloMcp {
         Extension(parts): Extension<Parts>,
         Parameters(input): Parameters<NewCompany>,
     ) -> ToolResult<Company> {
-        require_write(&parts)?;
-        companies::create(&self.db, input)
+        companies::create(&self.db, writer(&parts)?, input)
             .await
             .map(Json)
             .map_err(fail)
@@ -300,8 +326,7 @@ impl RoloMcp {
         Extension(parts): Extension<Parts>,
         Parameters(Update { id, changes }): Parameters<Update<CompanyPatch>>,
     ) -> ToolResult<Company> {
-        require_write(&parts)?;
-        companies::update(&self.db, &id, changes)
+        companies::update(&self.db, writer(&parts)?, &id, changes)
             .await
             .map(Json)
             .map_err(fail)
@@ -316,29 +341,35 @@ impl RoloMcp {
             .map_err(fail)
     }
 
-    /// Search deals by title, pipeline, stage, status (open/won/lost), company or contact.
+    /// Search deals by title, pipeline, stage, status (open/won/lost), company,
+    /// contact or owner.
     #[tool(annotations(read_only_hint = true))]
     async fn search_deals(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(query): Parameters<DealQuery>,
     ) -> ToolResult<Page<Deal>> {
-        deals::list(&self.db, query).await.map(Json).map_err(fail)
+        deals::list(&self.db, caller(&parts)?, query)
+            .await
+            .map(Json)
+            .map_err(fail)
     }
 
     /// Get a deal with its recent activity.
     #[tool(annotations(read_only_hint = true))]
     async fn get_deal(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(IdParam { id }): Parameters<IdParam>,
     ) -> ToolResult<DealDetails> {
+        let caller = caller(&parts)?;
         let details = async {
             let deal = deals::get(&self.db.reader, &id).await?;
-            let recent_activities = self
-                .recent_activities(ActivityQuery {
-                    deal_id: Some(id.clone()),
-                    ..Default::default()
-                })
-                .await?;
+            let activities_query = ActivityQuery {
+                deal_id: Some(id.clone()),
+                ..Default::default()
+            };
+            let recent_activities = self.recent_activities(caller, activities_query).await?;
             Ok(DealDetails {
                 deal,
                 recent_activities,
@@ -354,8 +385,10 @@ impl RoloMcp {
         Extension(parts): Extension<Parts>,
         Parameters(input): Parameters<NewDeal>,
     ) -> ToolResult<Deal> {
-        require_write(&parts)?;
-        deals::create(&self.db, input).await.map(Json).map_err(fail)
+        deals::create(&self.db, writer(&parts)?, input)
+            .await
+            .map(Json)
+            .map_err(fail)
     }
 
     /// Update a deal, including moving it to another stage via `stage_id`.
@@ -366,21 +399,21 @@ impl RoloMcp {
         Extension(parts): Extension<Parts>,
         Parameters(Update { id, changes }): Parameters<Update<DealPatch>>,
     ) -> ToolResult<Deal> {
-        require_write(&parts)?;
-        deals::update(&self.db, &id, changes)
+        deals::update(&self.db, writer(&parts)?, &id, changes)
             .await
             .map(Json)
             .map_err(fail)
     }
 
-    /// List activities newest first, filtered by contact, company, deal or kind.
-    /// Use open=true for outstanding tasks.
+    /// List activities newest first, filtered by contact, company, deal, kind or
+    /// owner. Use open=true for outstanding tasks, and owner_id="me" for your own.
     #[tool(annotations(read_only_hint = true))]
     async fn list_activities(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(query): Parameters<ActivityQuery>,
     ) -> ToolResult<Page<Activity>> {
-        activities::list(&self.db, query)
+        activities::list(&self.db, caller(&parts)?, query)
             .await
             .map(Json)
             .map_err(fail)
@@ -394,8 +427,7 @@ impl RoloMcp {
         Extension(parts): Extension<Parts>,
         Parameters(input): Parameters<NewActivity>,
     ) -> ToolResult<Activity> {
-        require_write(&parts)?;
-        activities::create(&self.db, input)
+        activities::create(&self.db, writer(&parts)?, input)
             .await
             .map(Json)
             .map_err(fail)
@@ -408,8 +440,7 @@ impl RoloMcp {
         Extension(parts): Extension<Parts>,
         Parameters(Update { id, changes }): Parameters<Update<ActivityPatch>>,
     ) -> ToolResult<Activity> {
-        require_write(&parts)?;
-        activities::update(&self.db, &id, changes)
+        activities::update(&self.db, writer(&parts)?, &id, changes)
             .await
             .map(Json)
             .map_err(fail)

@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -9,6 +9,7 @@ use crate::api::extract::{Body, Id, Params};
 use crate::error::{ErrorBody, Result};
 use crate::service::Page;
 use crate::service::activities::{self, Activity, ActivityPatch, ActivityQuery, NewActivity};
+use crate::service::api_keys::Principal;
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -23,9 +24,10 @@ pub fn router() -> OpenApiRouter<AppState> {
     responses((status = 200, body = Page<Activity>)))]
 async fn list(
     State(state): State<AppState>,
+    Extension(caller): Extension<Principal>,
     Params(query): Params<ActivityQuery>,
 ) -> Result<Json<Page<Activity>>> {
-    Ok(Json(activities::list(&state.db, query).await?))
+    Ok(Json(activities::list(&state.db, &caller, query).await?))
 }
 
 /// Log an activity
@@ -33,11 +35,12 @@ async fn list(
     responses((status = 201, body = Activity), (status = 409, body = ErrorBody), (status = 422, body = ErrorBody)))]
 async fn create(
     State(state): State<AppState>,
+    Extension(caller): Extension<Principal>,
     Body(input): Body<NewActivity>,
 ) -> Result<(StatusCode, Json<Activity>)> {
     Ok((
         StatusCode::CREATED,
-        Json(activities::create(&state.db, input).await?),
+        Json(activities::create(&state.db, &caller, input).await?),
     ))
 }
 
@@ -54,10 +57,13 @@ async fn get(State(state): State<AppState>, Id(id): Id) -> Result<Json<Activity>
     responses((status = 200, body = Activity), (status = 404, body = ErrorBody), (status = 409, body = ErrorBody), (status = 422, body = ErrorBody)))]
 async fn update(
     State(state): State<AppState>,
+    Extension(caller): Extension<Principal>,
     Id(id): Id,
     Body(patch): Body<ActivityPatch>,
 ) -> Result<Json<Activity>> {
-    Ok(Json(activities::update(&state.db, &id, patch).await?))
+    Ok(Json(
+        activities::update(&state.db, &caller, &id, patch).await?,
+    ))
 }
 
 /// Delete an activity
