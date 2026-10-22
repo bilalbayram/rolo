@@ -12,6 +12,7 @@ use utoipa::{Modify, OpenApi};
     modifiers(&BearerAuth),
     security(("bearer" = [])),
     tags(
+        (name = "search", description = "Full-text search across all records"),
         (name = "companies"),
         (name = "contacts"),
         (name = "deals"),

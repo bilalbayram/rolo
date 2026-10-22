@@ -50,7 +50,7 @@ claude mcp add --transport http rolo http://127.0.0.1:3000/mcp \
   --header "Authorization: Bearer $TOKEN"
 ```
 
-Tools: `search_contacts`, `get_contact`, `create_contact`, `update_contact`,
+Tools: `search`, `search_contacts`, `get_contact`, `create_contact`, `update_contact`,
 `search_companies`, `get_company`, `create_company`, `update_company`,
 `list_pipelines`, `search_deals`, `get_deal`, `create_deal`, `update_deal`,
 `list_activities`, `log_activity`, `update_activity`.
@@ -83,9 +83,22 @@ read-only MCP tools; mutations return `403 forbidden`.
 - IDs are ULIDs, so they sort by creation time.
 - Every record has `custom`, a free-form JSON object. PATCH merges it, and setting a key to `null` removes that key.
 - PATCH changes only the fields you send. Setting a nullable field to `null` clears it.
-- Lists use cursor pagination: `?limit=50&cursor=<next_cursor>`.
+- Lists use cursor pagination: `?limit=50&cursor=<next_cursor>`. Their `q` filter uses the search index (see below).
 - Errors look like `{"error": {"code": "conflict", "message": "..."}}`.
 - Deleting a record keeps the activities linked to it and just unlinks them, so a deal keeps its history.
+
+## Search
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:3000/v1/search?q=acme+rob&types=company,contact"
+```
+
+Full-text search (SQLite FTS5) across contacts, companies, deals and activities:
+
+- **What's searched:** names, emails, phones, domains, deal titles, activity subjects and bodies, and custom field values.
+- **How words match:** each word matches the start of a word (`acm` finds Acme), and all words must match. Accents are ignored, so `zoe` finds Zoë, and punctuation is ignored, so `ada@acme.io` works.
+- **Ranking:** matches in titles (names, deal titles, activity subjects) rank highest. Each hit includes a snippet with the matched words in `**bold**`.
+- **List filters:** `q` on the list endpoints uses the same index but keeps the usual ordering and pagination.
 
 ## Change feed
 
@@ -144,7 +157,6 @@ over it. `src/delivery.rs` is the webhook worker. Migrations live in `migrations
 ## Roadmap
 
 - Webhook secret rotation, and automatically disabling endpoints that keep failing
-- FTS5 full-text search
 - Custom field definitions (typed and validated) on top of `custom`
 - Users / record owners
 - Backup guide with Litestream

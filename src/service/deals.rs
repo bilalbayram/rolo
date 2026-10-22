@@ -10,6 +10,7 @@ use super::{Page, events};
 use crate::custom_fields::CustomFields;
 use crate::db::Db;
 use crate::error::{Error, Result};
+use crate::service::search::Filter;
 use crate::util;
 
 #[derive(Debug, Clone, Serialize, ToSchema, JsonSchema)]
@@ -83,7 +84,8 @@ pub struct DealPatch {
 #[derive(Debug, Default, Deserialize, IntoParams, JsonSchema)]
 #[into_params(parameter_in = Query)]
 pub struct DealQuery {
-    /// Case-insensitive substring match on title.
+    /// Full-text search: every word must match as a prefix, e.g. `rollout acm`.
+    /// Searches the title and custom field values.
     pub q: Option<String>,
     pub pipeline_id: Option<String>,
     pub stage_id: Option<String>,
@@ -148,7 +150,11 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Deal> {
 
 pub async fn list(db: &Db, query: DealQuery) -> Result<Page<Deal>> {
     let limit = util::clamp_limit(query.limit);
-    let pattern = util::like_pattern(query.q);
+    let search = match Filter::from_query(query.q) {
+        Filter::All => None,
+        Filter::Matching(expression) => Some(expression),
+        Filter::Nothing => return Ok(Page::empty()),
+    };
     let fetch = limit + 1;
     let rows = sqlx::query_as!(
         Deal,
@@ -161,7 +167,10 @@ pub async fn list(db: &Db, query: DealQuery) -> Result<Page<Deal>> {
                   d.created_at AS "created_at: DateTime<Utc>",
                   d.updated_at AS "updated_at: DateTime<Utc>"
            FROM deals d JOIN stages s ON s.id = d.stage_id
-           WHERE (?1 IS NULL OR d.title LIKE ?1 ESCAPE '\')
+           WHERE (?1 IS NULL OR d.id IN (
+                      SELECT sd.entity_id FROM search_index
+                      JOIN search_documents sd ON sd.rowid = search_index.rowid
+                      WHERE search_index MATCH ?1))
              AND (?2 IS NULL OR s.pipeline_id = ?2)
              AND (?3 IS NULL OR d.stage_id = ?3)
              AND (?4 IS NULL OR s.kind = ?4)
@@ -170,7 +179,7 @@ pub async fn list(db: &Db, query: DealQuery) -> Result<Page<Deal>> {
              AND (?7 IS NULL OR d.id > ?7)
            ORDER BY d.id
            LIMIT ?8"#,
-        pattern,
+        search,
         query.pipeline_id,
         query.stage_id,
         query.status,

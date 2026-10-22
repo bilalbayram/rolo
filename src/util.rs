@@ -59,17 +59,6 @@ pub fn required(value: String, field: &str) -> Result<String> {
     Ok(value.to_string())
 }
 
-/// `%query%` for a LIKE search with `ESCAPE '\'`, with wildcards in the input escaped.
-pub fn like_pattern(query: Option<String>) -> Option<String> {
-    non_empty(query).map(|query| {
-        let escaped = query
-            .replace('\\', "\\\\")
-            .replace('%', "\\%")
-            .replace('_', "\\_");
-        format!("%{escaped}%")
-    })
-}
-
 /// Page size from a `limit` parameter: 1 to 200, default 50.
 pub fn clamp_limit(limit: Option<i64>) -> i64 {
     limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT)
@@ -100,14 +89,5 @@ mod tests {
         let mut sorted = ids.clone();
         sorted.sort();
         assert_eq!(ids, sorted);
-    }
-
-    #[test]
-    fn like_pattern_escapes_wildcards() {
-        assert_eq!(
-            like_pattern(Some(" 50%_off ".into())),
-            Some(r"%50\%\_off%".into())
-        );
-        assert_eq!(like_pattern(Some("  ".into())), None);
     }
 }

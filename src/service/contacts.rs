@@ -9,6 +9,7 @@ use super::{Page, events};
 use crate::custom_fields::CustomFields;
 use crate::db::Db;
 use crate::error::{Error, Result};
+use crate::service::search::Filter;
 use crate::util;
 
 #[derive(Debug, Clone, Serialize, ToSchema, JsonSchema)]
@@ -71,7 +72,8 @@ pub struct ContactPatch {
 #[derive(Debug, Default, Deserialize, IntoParams, JsonSchema)]
 #[into_params(parameter_in = Query)]
 pub struct ContactQuery {
-    /// Case-insensitive substring match on name, email or phone.
+    /// Full-text search: every word must match as a prefix, e.g. `ada acm`.
+    /// Searches all text fields, including custom field values.
     pub q: Option<String>,
     pub company_id: Option<String>,
     /// 1-200, default 50.
@@ -116,7 +118,11 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Contact>
 
 pub async fn list(db: &Db, query: ContactQuery) -> Result<Page<Contact>> {
     let limit = util::clamp_limit(query.limit);
-    let pattern = util::like_pattern(query.q);
+    let search = match Filter::from_query(query.q) {
+        Filter::All => None,
+        Filter::Matching(expression) => Some(expression),
+        Filter::Nothing => return Ok(Page::empty()),
+    };
     let fetch = limit + 1;
     let rows = sqlx::query_as!(
         Contact,
@@ -125,15 +131,15 @@ pub async fn list(db: &Db, query: ContactQuery) -> Result<Page<Contact>> {
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
            FROM contacts
-           WHERE (?1 IS NULL
-                  OR (coalesce(first_name, '') || ' ' || coalesce(last_name, '')) LIKE ?1 ESCAPE '\'
-                  OR email LIKE ?1 ESCAPE '\'
-                  OR phone LIKE ?1 ESCAPE '\')
+           WHERE (?1 IS NULL OR id IN (
+                      SELECT d.entity_id FROM search_index
+                      JOIN search_documents d ON d.rowid = search_index.rowid
+                      WHERE search_index MATCH ?1))
              AND (?2 IS NULL OR company_id = ?2)
              AND (?3 IS NULL OR id > ?3)
            ORDER BY id
            LIMIT ?4"#,
-        pattern,
+        search,
         query.company_id,
         query.cursor,
         fetch,

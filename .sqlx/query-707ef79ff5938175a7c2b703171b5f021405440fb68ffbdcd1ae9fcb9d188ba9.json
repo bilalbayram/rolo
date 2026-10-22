@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, kind AS \"kind: ActivityKind\", subject, body, contact_id, company_id, deal_id,\n                  occurred_at AS \"occurred_at: DateTime<Utc>\",\n                  due_at AS \"due_at: DateTime<Utc>\",\n                  completed_at AS \"completed_at: DateTime<Utc>\",\n                  custom AS \"custom: Json<CustomFields>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM activities\n           WHERE (?1 IS NULL OR contact_id = ?1)\n             AND (?2 IS NULL OR company_id = ?2)\n             AND (?3 IS NULL OR deal_id = ?3)\n             AND (?4 IS NULL OR kind = ?4)\n             AND (?5 IS NULL OR (?5 = (completed_at IS NULL) AND kind = 'task'))\n             AND (?6 IS NULL OR id < ?6)\n           ORDER BY id DESC\n           LIMIT ?7",
+  "query": "SELECT id, kind AS \"kind: ActivityKind\", subject, body, contact_id, company_id, deal_id,\n                  occurred_at AS \"occurred_at: DateTime<Utc>\",\n                  due_at AS \"due_at: DateTime<Utc>\",\n                  completed_at AS \"completed_at: DateTime<Utc>\",\n                  custom AS \"custom: Json<CustomFields>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM activities\n           WHERE (?1 IS NULL OR id IN (\n                      SELECT d.entity_id FROM search_index\n                      JOIN search_documents d ON d.rowid = search_index.rowid\n                      WHERE search_index MATCH ?1))\n             AND (?2 IS NULL OR contact_id = ?2)\n             AND (?3 IS NULL OR company_id = ?3)\n             AND (?4 IS NULL OR deal_id = ?4)\n             AND (?5 IS NULL OR kind = ?5)\n             AND (?6 IS NULL OR (?6 = (completed_at IS NULL) AND kind = 'task'))\n             AND (?7 IS NULL OR id < ?7)\n           ORDER BY id DESC\n           LIMIT ?8",
   "describe": {
     "columns": [
       {
@@ -148,7 +148,7 @@
       }
     ],
     "parameters": {
-      "Right": 7
+      "Right": 8
     },
     "nullable": [
       false,
@@ -166,5 +166,5 @@
       false
     ]
   },
-  "hash": "f71c6cd7619f2065a2d51ba2f44fd178500bb72029462eee95fa776171324f17"
+  "hash": "707ef79ff5938175a7c2b703171b5f021405440fb68ffbdcd1ae9fcb9d188ba9"
 }

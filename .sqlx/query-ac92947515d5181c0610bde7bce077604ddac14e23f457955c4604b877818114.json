@@ -1,0 +1,57 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT d.entity_type AS \"entity_type!: EntityType\",\n                  d.entity_id AS \"id!\",\n                  d.title AS \"title!\",\n                  snippet(search_index, -1, '**', '**', '…', 12) AS \"snippet!: String\"\n           FROM search_index\n           JOIN search_documents d ON d.rowid = search_index.rowid\n           WHERE search_index MATCH ?1\n             AND (?2 IS NULL OR d.entity_type IN (SELECT value FROM json_each(?2)))\n           ORDER BY bm25(search_index, 10.0, 1.0)\n           LIMIT ?3",
+  "describe": {
+    "columns": [
+      {
+        "name": "entity_type!: EntityType",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "search_documents",
+            "name": "entity_type"
+          }
+        }
+      },
+      {
+        "name": "id!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "search_documents",
+            "name": "entity_id"
+          }
+        }
+      },
+      {
+        "name": "title!",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "search_documents",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "name": "snippet!: String",
+        "ordinal": 3,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "ac92947515d5181c0610bde7bce077604ddac14e23f457955c4604b877818114"
+}

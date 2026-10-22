@@ -9,6 +9,7 @@ use super::{Page, events};
 use crate::custom_fields::CustomFields;
 use crate::db::Db;
 use crate::error::{Error, Result};
+use crate::service::search::Filter;
 use crate::util;
 
 #[derive(
@@ -96,6 +97,9 @@ pub struct ActivityPatch {
 #[derive(Debug, Default, Deserialize, IntoParams, JsonSchema)]
 #[into_params(parameter_in = Query)]
 pub struct ActivityQuery {
+    /// Full-text search: every word must match as a prefix, e.g. `budget rob`.
+    /// Searches the subject, body and custom field values.
+    pub q: Option<String>,
     pub contact_id: Option<String>,
     pub company_id: Option<String>,
     pub deal_id: Option<String>,
@@ -139,6 +143,11 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Activity
 /// Newest first.
 pub async fn list(db: &Db, query: ActivityQuery) -> Result<Page<Activity>> {
     let limit = util::clamp_limit(query.limit);
+    let search = match Filter::from_query(query.q) {
+        Filter::All => None,
+        Filter::Matching(expression) => Some(expression),
+        Filter::Nothing => return Ok(Page::empty()),
+    };
     let fetch = limit + 1;
     let rows = sqlx::query_as!(
         Activity,
@@ -150,14 +159,19 @@ pub async fn list(db: &Db, query: ActivityQuery) -> Result<Page<Activity>> {
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
            FROM activities
-           WHERE (?1 IS NULL OR contact_id = ?1)
-             AND (?2 IS NULL OR company_id = ?2)
-             AND (?3 IS NULL OR deal_id = ?3)
-             AND (?4 IS NULL OR kind = ?4)
-             AND (?5 IS NULL OR (?5 = (completed_at IS NULL) AND kind = 'task'))
-             AND (?6 IS NULL OR id < ?6)
+           WHERE (?1 IS NULL OR id IN (
+                      SELECT d.entity_id FROM search_index
+                      JOIN search_documents d ON d.rowid = search_index.rowid
+                      WHERE search_index MATCH ?1))
+             AND (?2 IS NULL OR contact_id = ?2)
+             AND (?3 IS NULL OR company_id = ?3)
+             AND (?4 IS NULL OR deal_id = ?4)
+             AND (?5 IS NULL OR kind = ?5)
+             AND (?6 IS NULL OR (?6 = (completed_at IS NULL) AND kind = 'task'))
+             AND (?7 IS NULL OR id < ?7)
            ORDER BY id DESC
-           LIMIT ?7"#,
+           LIMIT ?8"#,
+        search,
         query.contact_id,
         query.company_id,
         query.deal_id,

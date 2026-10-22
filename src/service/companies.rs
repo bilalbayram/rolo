@@ -9,6 +9,7 @@ use super::{Page, events};
 use crate::custom_fields::CustomFields;
 use crate::db::Db;
 use crate::error::{Error, Result};
+use crate::service::search::Filter;
 use crate::util;
 
 #[derive(Debug, Clone, Serialize, ToSchema, JsonSchema)]
@@ -51,7 +52,8 @@ pub struct CompanyPatch {
 #[derive(Debug, Default, Deserialize, IntoParams, JsonSchema)]
 #[into_params(parameter_in = Query)]
 pub struct CompanyQuery {
-    /// Case-insensitive substring match on name or domain.
+    /// Full-text search: every word must match as a prefix, e.g. `acm rob`.
+    /// Searches all text fields, including custom field values.
     pub q: Option<String>,
     /// 1-200, default 50.
     pub limit: Option<i64>,
@@ -80,7 +82,11 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Company>
 
 pub async fn list(db: &Db, query: CompanyQuery) -> Result<Page<Company>> {
     let limit = util::clamp_limit(query.limit);
-    let pattern = util::like_pattern(query.q);
+    let search = match Filter::from_query(query.q) {
+        Filter::All => None,
+        Filter::Matching(expression) => Some(expression),
+        Filter::Nothing => return Ok(Page::empty()),
+    };
     let fetch = limit + 1;
     let rows = sqlx::query_as!(
         Company,
@@ -89,11 +95,14 @@ pub async fn list(db: &Db, query: CompanyQuery) -> Result<Page<Company>> {
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
            FROM companies
-           WHERE (?1 IS NULL OR name LIKE ?1 ESCAPE '\' OR domain LIKE ?1 ESCAPE '\')
+           WHERE (?1 IS NULL OR id IN (
+                      SELECT d.entity_id FROM search_index
+                      JOIN search_documents d ON d.rowid = search_index.rowid
+                      WHERE search_index MATCH ?1))
              AND (?2 IS NULL OR id > ?2)
            ORDER BY id
            LIMIT ?3"#,
-        pattern,
+        search,
         query.cursor,
         fetch,
     )

@@ -20,6 +20,7 @@ use crate::service::companies::{self, Company, CompanyPatch, CompanyQuery, NewCo
 use crate::service::contacts::{self, Contact, ContactPatch, ContactQuery, NewContact};
 use crate::service::deals::{self, Deal, DealPatch, DealQuery, NewDeal};
 use crate::service::pipelines::{self, Pipeline};
+use crate::service::search::{self, EntityType, SearchResults};
 
 const INSTRUCTIONS: &str = "\
 rolo is a CRM. Records: companies, contacts (people, optionally at a company), \
@@ -27,6 +28,8 @@ deals (opportunities moving through pipeline stages), and activities (notes, cal
 emails, meetings and tasks linked to contacts, companies and/or deals).
 
 - IDs are prefixed: com_, con_, deal_, act_, pip_, stg_.
+- Use `search` to find anything by name, email, domain or words in notes, then \
+fetch details with get_contact / get_company / get_deal.
 - Search before creating to avoid duplicates; emails and company domains are unique.
 - Deal amounts are integers in minor currency units (cents).
 - Call list_pipelines to find stage IDs; move a deal with update_deal + stage_id.
@@ -35,6 +38,17 @@ with due_at, and complete them with update_activity + completed_at.
 - Every record has `custom`, a free-form object for extra fields.";
 
 type ToolResult<T> = Result<Json<T>, String>;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SearchParams {
+    /// Words to find; each matches as a prefix and all must match.
+    pub query: String,
+    /// Restrict to these record types. Default: all.
+    #[serde(default)]
+    pub types: Vec<EntityType>,
+    /// 1-50, default 20.
+    pub limit: Option<i64>,
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct IdParam {
@@ -121,6 +135,19 @@ impl RoloMcp {
 
 #[tool_router]
 impl RoloMcp {
+    /// Search contacts, companies, deals and activities (including notes and custom
+    /// fields) by keywords. Returns ranked hits with IDs and a matching snippet.
+    #[tool(annotations(read_only_hint = true))]
+    async fn search(
+        &self,
+        Parameters(params): Parameters<SearchParams>,
+    ) -> ToolResult<SearchResults> {
+        search::search(&self.db, &params.query, &params.types, params.limit)
+            .await
+            .map(Json)
+            .map_err(fail)
+    }
+
     /// Search contacts by name, email or phone, optionally within a company.
     #[tool(annotations(read_only_hint = true))]
     async fn search_contacts(
