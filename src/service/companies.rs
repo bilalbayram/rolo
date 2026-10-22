@@ -144,7 +144,13 @@ pub async fn create(db: &Db, caller: &Principal, input: NewCompany) -> Result<Co
     users::ensure_assignable(&mut tx, company.owner_id.as_deref()).await?;
     let custom = std::mem::take(&mut company.custom.0);
     company.custom = Json(
-        field_definitions::validate(&mut tx, EntityType::Company, custom, Write::Create).await?,
+        field_definitions::validate(
+            &mut tx,
+            EntityType::Company,
+            custom,
+            Write::Create(&company.id),
+        )
+        .await?,
     );
     sqlx::query!(
         "INSERT INTO companies (id, name, domain, owner_id, custom, created_at, updated_at)
@@ -180,7 +186,7 @@ pub async fn update(db: &Db, caller: &Principal, id: &str, patch: CompanyPatch) 
     }
     if let Some(update) = patch.custom {
         let update =
-            field_definitions::validate(&mut tx, EntityType::Company, update, Write::Update)
+            field_definitions::validate(&mut tx, EntityType::Company, update, Write::Update(id))
                 .await?;
         company.custom.merge(update);
     }

@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (\n                   SELECT 1 FROM record_custom_fields\n                   WHERE entity_type = ?1 AND json_extract(custom, '$.' || ?2) IS NOT NULL\n                   GROUP BY json_extract(custom, '$.' || ?2)\n                   HAVING count(*) > 1\n               ) AS \"duplicated: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "duplicated: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b5955f16d0e3d703a1477a92fc3cc67a23d446ddf4ef3c619227ccd57421c2be"
+}

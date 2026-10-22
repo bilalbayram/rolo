@@ -212,3 +212,105 @@ async fn agents_can_discover_fields_and_see_validation_errors() {
         "invalid: custom.tier: must be one of: gold, silver"
     );
 }
+
+#[tokio::test]
+async fn unique_fields_reject_values_another_record_has() {
+    let app = TestApp::new().await;
+    let definition = define(
+        &app,
+        json!({"entity_type": "contact", "key": "instagram_id", "field_type": "text", "unique": true}),
+    )
+    .await;
+    assert_eq!(definition["unique"], true);
+
+    let contact = |name: &str, instagram_id: &str| json!({"first_name": name, "custom": {"instagram_id": instagram_id}});
+    let (status, ada) = app.post("/v1/contacts", contact("Ada", "ig_1")).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let ada_id = ada["id"].as_str().unwrap();
+    let (status, body) = app.post("/v1/contacts", contact("Grace", "ig_1")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        message(&body),
+        "custom.instagram_id: another contact has this value"
+    );
+    let (status, grace) = app.post("/v1/contacts", contact("Grace", "ig_2")).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let grace_url = format!("/v1/contacts/{}", grace["id"].as_str().unwrap());
+
+    let instagram_id = |value: Value| json!({"custom": {"instagram_id": value}});
+    let (status, _) = app.patch(&grace_url, instagram_id(json!("ig_1"))).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    // Writing a record's own value again is fine.
+    let ada_url = format!("/v1/contacts/{ada_id}");
+    let (status, _) = app.patch(&ada_url, instagram_id(json!("ig_1"))).await;
+    assert_eq!(status, StatusCode::OK);
+    // Removing a value frees it.
+    let (status, _) = app.patch(&ada_url, instagram_id(Value::Null)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = app.patch(&grace_url, instagram_id(json!("ig_1"))).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Uniqueness is per record type.
+    let (status, _) = app
+        .post(
+            "/v1/companies",
+            json!({"name": "Acme", "custom": {"instagram_id": "ig_1"}}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // `unique` is fixed once defined.
+    let definition_url = format!("/v1/custom-fields/{}", definition["id"].as_str().unwrap());
+    let (status, _) = app.patch(&definition_url, json!({"unique": false})).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn unique_fields_need_a_suitable_type_and_no_existing_duplicates() {
+    let app = TestApp::new().await;
+    let (status, body) = app
+        .post(
+            "/v1/custom-fields",
+            json!({"entity_type": "contact", "key": "vip", "field_type": "boolean", "unique": true}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        message(&body),
+        "boolean and multiselect fields cannot be unique"
+    );
+
+    for _ in 0..2 {
+        let (status, _) = app
+            .post(
+                "/v1/deals",
+                json!({"title": "Wedding", "custom": {"booking_ref": 7}}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+    let unique_ref = json!({"entity_type": "deal", "key": "booking_ref", "field_type": "number", "unique": true});
+    let (status, body) = app.post("/v1/custom-fields", unique_ref.clone()).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        message(&body),
+        "custom.booking_ref cannot be unique: some records already share a value"
+    );
+    let (_, page) = app.get("/v1/deals").await;
+    let second = page["data"][1]["id"].as_str().unwrap();
+    let (status, _) = app
+        .patch(
+            &format!("/v1/deals/{second}"),
+            json!({"custom": {"booking_ref": 8}}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    define(&app, unique_ref).await;
+    let (status, _) = app
+        .post(
+            "/v1/deals",
+            json!({"title": "Gala", "custom": {"booking_ref": 8.0}}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}

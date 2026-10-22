@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!\" FROM record_custom_fields\n           WHERE entity_type = ?1 AND json_extract(custom, '$.' || ?2) = json_extract(?3, '$')\n           ORDER BY id\n           LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "626f52e3c0a23a1e070b7ac7d03dd7a39be44932a98fc0d32e484003d971d849"
+}

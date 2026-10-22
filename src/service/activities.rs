@@ -230,7 +230,13 @@ pub async fn create(db: &Db, caller: &Principal, input: NewActivity) -> Result<A
     users::ensure_assignable(&mut tx, activity.owner_id.as_deref()).await?;
     let custom = std::mem::take(&mut activity.custom.0);
     activity.custom = Json(
-        field_definitions::validate(&mut tx, EntityType::Activity, custom, Write::Create).await?,
+        field_definitions::validate(
+            &mut tx,
+            EntityType::Activity,
+            custom,
+            Write::Create(&activity.id),
+        )
+        .await?,
     );
     sqlx::query!(
         "INSERT INTO activities
@@ -293,7 +299,7 @@ pub async fn update(
     }
     if let Some(update) = patch.custom {
         let update =
-            field_definitions::validate(&mut tx, EntityType::Activity, update, Write::Update)
+            field_definitions::validate(&mut tx, EntityType::Activity, update, Write::Update(id))
                 .await?;
         activity.custom.merge(update);
     }

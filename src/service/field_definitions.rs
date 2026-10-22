@@ -57,6 +57,8 @@ pub struct FieldDefinition {
     pub options: Json<Vec<String>>,
     /// Must be set when a record is created, and cannot be removed afterwards.
     pub required: bool,
+    /// No two records of this type may have the same value.
+    pub unique: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -76,10 +78,15 @@ pub struct NewFieldDefinition {
     pub options: Vec<String>,
     #[serde(default)]
     pub required: bool,
+    /// No two records of this type may have the same value, e.g. an
+    /// `instagram_id` on contacts. Fixed once the field is defined; not allowed
+    /// for boolean and multiselect fields.
+    #[serde(default)]
+    pub unique: bool,
 }
 
-/// Omitted fields are left unchanged. The key, record type and field type are
-/// fixed; delete and recreate the definition to change them.
+/// Omitted fields are left unchanged. The key, record type, field type and
+/// `unique` are fixed; delete and recreate the definition to change them.
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FieldDefinitionPatch {
@@ -98,13 +105,22 @@ pub struct FieldDefinitionQuery {
     pub entity_type: Option<EntityType>,
 }
 
-/// How custom fields are being written.
+/// How custom fields are being written, and to which record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Write {
-    /// The complete set of fields for a new record.
-    Create,
-    /// A PATCH to merge into existing fields; null values remove keys.
-    Update,
+pub enum Write<'a> {
+    /// The complete set of fields for a new record with this ID.
+    Create(&'a str),
+    /// A PATCH to merge into the fields of the record with this ID; null
+    /// values remove keys.
+    Update(&'a str),
+}
+
+impl Write<'_> {
+    fn record_id(&self) -> &str {
+        match self {
+            Write::Create(id) | Write::Update(id) => id,
+        }
+    }
 }
 
 fn validate_key(key: String) -> Result<String> {
@@ -148,6 +164,7 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<FieldDef
                   field_type AS "field_type: FieldType",
                   options AS "options: Json<Vec<String>>",
                   required AS "required: bool",
+                  is_unique AS "unique: bool",
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
            FROM custom_field_definitions WHERE id = ?"#,
@@ -174,6 +191,7 @@ async fn list_for(
                   field_type AS "field_type: FieldType",
                   options AS "options: Json<Vec<String>>",
                   required AS "required: bool",
+                  is_unique AS "unique: bool",
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
            FROM custom_field_definitions
@@ -188,6 +206,16 @@ async fn list_for(
 pub async fn create(db: &Db, input: NewFieldDefinition) -> Result<FieldDefinition> {
     let now = Utc::now();
     let key = validate_key(input.key)?;
+    if input.unique
+        && matches!(
+            input.field_type,
+            FieldType::Boolean | FieldType::Multiselect
+        )
+    {
+        return Err(Error::Invalid(
+            "boolean and multiselect fields cannot be unique".into(),
+        ));
+    }
     let definition = FieldDefinition {
         id: util::new_id("cfd"),
         entity_type: input.entity_type,
@@ -197,14 +225,36 @@ pub async fn create(db: &Db, input: NewFieldDefinition) -> Result<FieldDefinitio
         field_type: input.field_type,
         options: Json(validate_options(input.field_type, input.options)?),
         required: input.required,
+        unique: input.unique,
         created_at: now,
         updated_at: now,
     };
+    let mut tx = db.writer.begin().await?;
+    if definition.unique {
+        let duplicated = sqlx::query_scalar!(
+            r#"SELECT EXISTS (
+                   SELECT 1 FROM record_custom_fields
+                   WHERE entity_type = ?1 AND json_extract(custom, '$.' || ?2) IS NOT NULL
+                   GROUP BY json_extract(custom, '$.' || ?2)
+                   HAVING count(*) > 1
+               ) AS "duplicated: bool""#,
+            definition.entity_type,
+            definition.key,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if duplicated {
+            return Err(Error::Conflict(format!(
+                "custom.{} cannot be unique: some records already share a value",
+                definition.key
+            )));
+        }
+    }
     sqlx::query!(
         "INSERT INTO custom_field_definitions
              (id, entity_type, key, label, description, field_type, options, required,
-              created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              is_unique, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         definition.id,
         definition.entity_type,
         definition.key,
@@ -213,10 +263,11 @@ pub async fn create(db: &Db, input: NewFieldDefinition) -> Result<FieldDefinitio
         definition.field_type,
         definition.options,
         definition.required,
+        definition.unique,
         definition.created_at,
         definition.updated_at,
     )
-    .execute(&db.writer)
+    .execute(&mut *tx)
     .await
     .map_err(|err| match Error::from(err) {
         Error::Conflict(_) => Error::Conflict(format!(
@@ -225,6 +276,7 @@ pub async fn create(db: &Db, input: NewFieldDefinition) -> Result<FieldDefinitio
         )),
         other => other,
     })?;
+    tx.commit().await?;
     Ok(definition)
 }
 
@@ -274,13 +326,16 @@ pub async fn delete(db: &Db, id: &str) -> Result<()> {
 }
 
 /// Validate and normalize custom field values being written to a record of
-/// `entity_type`. Keys without a definition pass through unchanged. All problems
-/// are reported together.
+/// `entity_type`. Keys without a definition pass through unchanged. Invalid
+/// values are reported together in one `Invalid` error; then values of unique
+/// fields that another record already has are reported in one `Conflict`.
+/// Call it in the write transaction, so that no other write can take a unique
+/// value between the check and the write.
 pub async fn validate(
     conn: &mut SqliteConnection,
     entity_type: EntityType,
     fields: CustomFields,
-    write: Write,
+    write: Write<'_>,
 ) -> Result<CustomFields> {
     let definitions = list_for(conn, Some(entity_type)).await?;
     if definitions.is_empty() {
@@ -289,7 +344,7 @@ pub async fn validate(
     let definition_for = |key: &str| definitions.iter().find(|d| d.key == key);
 
     let mut problems: Vec<String> = Vec::new();
-    if write == Write::Create {
+    if matches!(write, Write::Create(_)) {
         let missing = definitions
             .iter()
             .filter(|d| d.required && fields.get(&d.key).is_none_or(Value::is_null));
@@ -304,7 +359,7 @@ pub async fn validate(
             continue;
         };
         if value.is_null() {
-            if definition.required && write == Write::Update {
+            if definition.required && matches!(write, Write::Update(_)) {
                 problems.push(format!("custom.{key}: required and cannot be removed"));
             }
             normalized.push((key, value));
@@ -318,7 +373,50 @@ pub async fn validate(
     if !problems.is_empty() {
         return Err(Error::Invalid(problems.join("; ")));
     }
+
+    let record_type = serde_json::to_value(entity_type).map_err(anyhow::Error::from)?;
+    let record_type = record_type
+        .as_str()
+        .expect("record types serialize as strings");
+    let mut conflicts: Vec<String> = Vec::new();
+    for (key, value) in &normalized {
+        if value.is_null() || !definition_for(key).is_some_and(|d| d.unique) {
+            continue;
+        }
+        if find_by_value(conn, entity_type, key, value)
+            .await?
+            .is_some_and(|id| id != write.record_id())
+        {
+            conflicts.push(format!(
+                "custom.{key}: another {record_type} has this value"
+            ));
+        }
+    }
+    if !conflicts.is_empty() {
+        return Err(Error::Conflict(conflicts.join("; ")));
+    }
     Ok(normalized.into_iter().collect())
+}
+
+/// The first record of `entity_type` whose custom field `key` equals `value`.
+pub async fn find_by_value(
+    conn: &mut SqliteConnection,
+    entity_type: EntityType,
+    key: &str,
+    value: &Value,
+) -> Result<Option<String>> {
+    let value = value.to_string();
+    Ok(sqlx::query_scalar!(
+        r#"SELECT id AS "id!" FROM record_custom_fields
+           WHERE entity_type = ?1 AND json_extract(custom, '$.' || ?2) = json_extract(?3, '$')
+           ORDER BY id
+           LIMIT 1"#,
+        entity_type,
+        key,
+        value,
+    )
+    .fetch_optional(conn)
+    .await?)
 }
 
 /// The normalized value, or a description of why it is invalid.
@@ -394,6 +492,7 @@ mod tests {
             field_type,
             options: Json(options.iter().map(|o| o.to_string()).collect()),
             required: false,
+            unique: false,
             created_at: now,
             updated_at: now,
         }

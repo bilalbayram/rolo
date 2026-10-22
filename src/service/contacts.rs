@@ -213,7 +213,13 @@ pub async fn create(
     users::ensure_assignable(&mut tx, contact.owner_id.as_deref()).await?;
     let custom = std::mem::take(&mut contact.custom.0);
     contact.custom = Json(
-        field_definitions::validate(&mut tx, EntityType::Contact, custom, Write::Create).await?,
+        field_definitions::validate(
+            &mut tx,
+            EntityType::Contact,
+            custom,
+            Write::Create(&contact.id),
+        )
+        .await?,
     );
     sqlx::query!(
         "INSERT INTO contacts
@@ -271,7 +277,7 @@ pub async fn update(
     }
     if let Some(update) = patch.custom {
         let update =
-            field_definitions::validate(&mut tx, EntityType::Contact, update, Write::Update)
+            field_definitions::validate(&mut tx, EntityType::Contact, update, Write::Update(id))
                 .await?;
         contact.custom.merge(update);
     }

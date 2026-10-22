@@ -128,6 +128,7 @@ curl -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
 - **Types:** `text`, `number`, `boolean`, `date` (`YYYY-MM-DD`), `datetime` (RFC 3339, stored in UTC), `url` (http/https), `email` (stored lowercased), `select` (one of `options`) and `multiselect` (an array of distinct `options`).
 - **Validation:** values for defined keys are checked and normalized on every create and update. All problems are reported in one `422`, e.g. `custom.tier: must be one of: gold, silver; custom.nps: must be a number`.
 - **Required fields** must be set when a record is created, and can't be removed later.
+- **Unique fields** (`"unique": true`) can't repeat a value across records of the same type, e.g. an `instagram_id` on contacts. A clash returns `409`, e.g. `custom.instagram_id: another contact has this value`. `unique` is set when the field is defined and can't be changed later. It isn't allowed for `boolean` and `multiselect` fields, or when existing records already share a value.
 - **Changes don't apply retroactively.** Existing records aren't revalidated when you change a definition. Deleting a definition keeps the stored values; the key just becomes free-form again. Keys without a definition are always accepted.
 - **For agents:** the `list_custom_fields` MCP tool shows an agent the available fields and their options.
 

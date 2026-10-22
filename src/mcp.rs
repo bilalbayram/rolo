@@ -46,8 +46,8 @@ so list_activities with owner_id=\"me\" and open=true lists your tasks. Call \
 list_users to find other users.
 - Every record has `custom`, an object for extra fields. Call list_custom_fields \
 to see defined fields: their values are validated by type, select fields only \
-accept their options, and required fields must be set on create. Other keys \
-are free-form.";
+accept their options, required fields must be set on create, and no two records \
+of a type can share a value of a unique field. Other keys are free-form.";
 
 type ToolResult<T> = Result<Json<T>, String>;
 
@@ -348,8 +348,8 @@ impl RoloMcp {
             .map_err(fail)
     }
 
-    /// List defined custom fields (keys, types, select options, required) for
-    /// records' `custom` objects, optionally for one record type.
+    /// List defined custom fields (keys, types, select options, required, unique)
+    /// for records' `custom` objects, optionally for one record type.
     #[tool(annotations(read_only_hint = true))]
     async fn list_custom_fields(
         &self,

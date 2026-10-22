@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO custom_field_definitions\n             (id, entity_type, key, label, description, field_type, options, required,\n              is_unique, created_at, updated_at)\n         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "ed688a2a6d773989f7f7001b41689dc8fdea803a99a2352f773bb64422cec33a"
+}

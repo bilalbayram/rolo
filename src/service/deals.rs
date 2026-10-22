@@ -224,7 +224,8 @@ pub async fn create(db: &Db, caller: &Principal, input: NewDeal) -> Result<Deal>
     let mut tx = db.writer.begin().await?;
     users::ensure_assignable(&mut tx, owner_id.as_deref()).await?;
     let custom =
-        field_definitions::validate(&mut tx, EntityType::Deal, input.custom, Write::Create).await?;
+        field_definitions::validate(&mut tx, EntityType::Deal, input.custom, Write::Create(&id))
+            .await?;
     let custom = Json(custom);
     let stage = match util::non_empty(input.stage_id) {
         Some(stage_id) => pipelines::get_stage(&mut *tx, &stage_id).await?,
@@ -293,7 +294,8 @@ pub async fn update(db: &Db, caller: &Principal, id: &str, patch: DealPatch) -> 
     }
     if let Some(update) = patch.custom {
         let update =
-            field_definitions::validate(&mut tx, EntityType::Deal, update, Write::Update).await?;
+            field_definitions::validate(&mut tx, EntityType::Deal, update, Write::Update(id))
+                .await?;
         deal.custom.merge(update);
     }
     deal.updated_at = now;

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, entity_type AS \"entity_type: EntityType\", key, label, description,\n                  field_type AS \"field_type: FieldType\",\n                  options AS \"options: Json<Vec<String>>\",\n                  required AS \"required: bool\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM custom_field_definitions\n           WHERE ?1 IS NULL OR entity_type = ?1\n           ORDER BY entity_type, key",
+  "query": "SELECT id, entity_type AS \"entity_type: EntityType\", key, label, description,\n                  field_type AS \"field_type: FieldType\",\n                  options AS \"options: Json<Vec<String>>\",\n                  required AS \"required: bool\",\n                  is_unique AS \"unique: bool\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM custom_field_definitions\n           WHERE ?1 IS NULL OR entity_type = ?1\n           ORDER BY entity_type, key",
   "describe": {
     "columns": [
       {
@@ -92,8 +92,19 @@
         }
       },
       {
-        "name": "created_at: DateTime<Utc>",
+        "name": "unique: bool",
         "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "custom_field_definitions",
+            "name": "is_unique"
+          }
+        }
+      },
+      {
+        "name": "created_at: DateTime<Utc>",
+        "ordinal": 9,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -104,7 +115,7 @@
       },
       {
         "name": "updated_at: DateTime<Utc>",
-        "ordinal": 9,
+        "ordinal": 10,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -127,8 +138,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "ceac7d8b63e82aea2c1e1a44c7970a25548d3e5fb1383c855c81da3533c4817c"
+  "hash": "39ce3e286de7a6643470fc55e85641a9f47ce56fe29470914affbf1de22198e4"
 }
