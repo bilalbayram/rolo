@@ -19,7 +19,11 @@ pub fn router() -> OpenApiRouter<AppState> {
 
 /// List deals
 ///
-/// Filter by pipeline, stage, status (open/won/lost), company or contact.
+/// Filter by pipeline, stage, status (open/won/lost), company, contact, owner or
+/// expected close date range (inclusive). Sort by `id` (default) or
+/// `expected_close_date` (`-expected_close_date` for latest first); deals
+/// without a date come last. With a date sort, `next_cursor` is
+/// `<date>/<id>` (`none/<id>` for an undated deal); pass it back unchanged.
 #[utoipa::path(get, path = "/deals", tag = "deals", params(DealQuery),
     responses((status = 200, body = Page<Deal>)))]
 async fn list(

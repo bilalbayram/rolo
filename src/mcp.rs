@@ -392,7 +392,8 @@ impl RoloMcp {
     }
 
     /// Search deals by title, pipeline, stage, status (open/won/lost), company,
-    /// contact or owner.
+    /// contact, owner or expected close date range, optionally sorted by
+    /// expected close date.
     #[tool(annotations(read_only_hint = true))]
     async fn search_deals(
         &self,

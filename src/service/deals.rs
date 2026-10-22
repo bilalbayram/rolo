@@ -105,10 +105,82 @@ pub struct DealQuery {
     pub contact_id: Option<String>,
     /// A user ID, `me`, or `none` for deals without an owner.
     pub owner_id: Option<String>,
+    /// Only deals expected to close on or after this date, e.g. `2026-11-01`.
+    pub expected_close_from: Option<NaiveDate>,
+    /// Only deals expected to close on or before this date, e.g. `2026-11-30`.
+    pub expected_close_to: Option<NaiveDate>,
+    /// Order: `id` (default, oldest first), `expected_close_date` (soonest
+    /// first) or `-expected_close_date` (latest first). Deals without an
+    /// expected close date come last.
+    pub sort: Option<DealSort>,
     /// 1-200, default 50.
     pub limit: Option<i64>,
-    /// `next_cursor` from the previous page.
+    /// `next_cursor` from the previous page, with the same `sort`.
     pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, ToSchema, JsonSchema)]
+pub enum DealSort {
+    /// Oldest first.
+    #[default]
+    #[serde(rename = "id")]
+    Id,
+    /// Soonest expected close date first, then oldest first.
+    #[serde(rename = "expected_close_date")]
+    ExpectedCloseDate,
+    /// Latest expected close date first, then newest first.
+    #[serde(rename = "-expected_close_date")]
+    ExpectedCloseDateDescending,
+}
+
+impl DealSort {
+    /// The direction the list query sorts in.
+    fn direction(self) -> &'static str {
+        match self {
+            DealSort::Id => "id",
+            DealSort::ExpectedCloseDate => "asc",
+            DealSort::ExpectedCloseDateDescending => "desc",
+        }
+    }
+
+    /// The sort key the list query uses for a deal without an expected close
+    /// date, chosen so that such deals come last.
+    fn undated_key(self) -> &'static str {
+        match self {
+            DealSort::ExpectedCloseDateDescending => "",
+            DealSort::Id | DealSort::ExpectedCloseDate => "~",
+        }
+    }
+}
+
+/// Word in a date cursor standing for "no expected close date".
+const UNDATED: &str = "none";
+
+/// Cursor after `deal` for a sort by expected close date: `<date>/<id>`, or
+/// `none/<id>` for a deal without a date.
+fn date_cursor(deal: &Deal) -> String {
+    let date = deal
+        .expected_close_date
+        .map_or_else(|| UNDATED.to_string(), |date| date.to_string());
+    format!("{date}/{}", deal.id)
+}
+
+/// The sort key and ID from a [`date_cursor`].
+fn parse_date_cursor(cursor: &str, sort: DealSort) -> Result<(String, String)> {
+    let invalid = || {
+        Error::Invalid(format!(
+            "invalid cursor for sort by expected close date: {cursor}"
+        ))
+    };
+    let (date, id) = cursor.split_once('/').ok_or_else(invalid)?;
+    let key = if date == UNDATED {
+        sort.undated_key().to_string()
+    } else {
+        NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .map_err(|_| invalid())?
+            .to_string()
+    };
+    Ok((key, id.to_string()))
 }
 
 #[derive(Serialize)]
@@ -170,7 +242,19 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
         Filter::Nothing => return Ok(Page::empty()),
     };
     let owner_id = users::resolve_me(query.owner_id, caller)?;
+    let sort = query.sort.unwrap_or_default();
+    let (cursor_key, cursor_id) = match (sort, query.cursor) {
+        (_, None) => (None, None),
+        (DealSort::Id, Some(cursor)) => (None, Some(cursor)),
+        (_, Some(cursor)) => {
+            let (key, id) = parse_date_cursor(&cursor, sort)?;
+            (Some(key), Some(id))
+        }
+    };
+    let direction = sort.direction();
     let fetch = limit + 1;
+    // Sorting by date uses the key coalesce(expected_close_date, undated key)
+    // and breaks ties by ID in the same direction; the cursor holds both.
     let rows = sqlx::query_as!(
         Deal,
         r#"SELECT d.id, d.title, d.amount, d.currency,
@@ -193,9 +277,19 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
              AND (?5 IS NULL OR d.company_id = ?5)
              AND (?6 IS NULL OR d.contact_id = ?6)
              AND (?7 IS NULL OR d.owner_id = ?7 OR (?7 = ?8 AND d.owner_id IS NULL))
-             AND (?9 IS NULL OR d.id > ?9)
-           ORDER BY d.id
-           LIMIT ?10"#,
+             AND (?9 IS NULL OR d.expected_close_date >= ?9)
+             AND (?10 IS NULL OR d.expected_close_date <= ?10)
+             AND (?11 IS NULL
+                  OR (?12 = 'id' AND d.id > ?11)
+                  OR (?12 = 'asc'
+                      AND (coalesce(d.expected_close_date, ?13), d.id) > (?14, ?11))
+                  OR (?12 = 'desc'
+                      AND (coalesce(d.expected_close_date, ?13), d.id) < (?14, ?11)))
+           ORDER BY CASE WHEN ?12 = 'asc' THEN coalesce(d.expected_close_date, ?13) END ASC,
+                    CASE WHEN ?12 = 'desc' THEN coalesce(d.expected_close_date, ?13) END DESC,
+                    CASE WHEN ?12 = 'desc' THEN d.id END DESC,
+                    d.id ASC
+           LIMIT ?15"#,
         search,
         query.pipeline_id,
         query.stage_id,
@@ -204,12 +298,24 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
         query.contact_id,
         owner_id,
         users::NO_OWNER,
-        query.cursor,
+        query.expected_close_from,
+        query.expected_close_to,
+        cursor_id,
+        direction,
+        sort.undated_key(),
+        cursor_key,
         fetch,
     )
     .fetch_all(&db.reader)
     .await?;
-    Ok(util::paginate(rows, limit, |d| &d.id))
+    let mut page = util::paginate(rows, limit, |d| &d.id);
+    if sort != DealSort::Id
+        && page.next_cursor.is_some()
+        && let Some(last) = page.data.last()
+    {
+        page.next_cursor = Some(date_cursor(last));
+    }
+    Ok(page)
 }
 
 pub async fn create(db: &Db, caller: &Principal, input: NewDeal) -> Result<Deal> {

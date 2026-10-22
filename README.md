@@ -101,6 +101,7 @@ assignee):
 - Every record has `custom`, a JSON object for extra fields. PATCH merges it, and setting a key to `null` removes that key. Keys can be given typed definitions (see below).
 - PATCH changes only the fields you send. Setting a nullable field to `null` clears it.
 - Lists use cursor pagination: `?limit=50&cursor=<next_cursor>`. Their `q` filter uses the search index (see below).
+- Deals can be filtered by expected close date, with both ends inclusive: `GET /v1/deals?expected_close_from=2026-11-01&expected_close_to=2026-11-30`. They can be sorted with `sort=expected_close_date` (soonest first) or `sort=-expected_close_date` (latest first), with deals without a date last. The default is `sort=id`. With a date sort, `next_cursor` is `<date>/<id>` (`none/<id>` for an undated deal), so pagination stays stable when dates tie.
 - Errors look like `{"error": {"code": "conflict", "message": "..."}}`.
 - Deleting a record keeps the activities linked to it and just unlinks them, so a deal keeps its history.
 
