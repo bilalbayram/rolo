@@ -105,3 +105,98 @@ async fn filters_and_sorts_by_expected_close_date() {
     assert_ne!(result["isError"], true, "{result}");
     assert_eq!(ids(&result["structuredContent"]), pick(&d, &[4, 0]));
 }
+
+#[tokio::test]
+async fn upsert_creates_then_updates_the_matching_deal() {
+    let app = TestApp::new().await;
+    for definition in [
+        json!({"entity_type": "deal", "key": "conversation_id", "field_type": "text", "unique": true}),
+        json!({"entity_type": "deal", "key": "mihrabat_inquiry_id", "field_type": "number", "unique": true}),
+        json!({"entity_type": "deal", "key": "intent", "field_type": "text"}),
+    ] {
+        let (status, body) = app.post("/v1/custom-fields", definition).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+    let by_conversation = json!(["custom.conversation_id"]);
+
+    let (status, first) = app
+        .post(
+            "/v1/deals/upsert",
+            json!({"title": "Düğün · Ayşe", "custom": {"conversation_id": "c1", "intent": "wedding"},
+                   "match_on": by_conversation}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    assert_eq!(first["created"], true);
+    assert_eq!(first["deal"]["stage_id"], "stg_lead");
+    let id = first["deal"]["id"].clone();
+
+    // Only the given fields change; custom merges; stage moves follow PATCH rules.
+    let (status, second) = app
+        .post(
+            "/v1/deals/upsert",
+            json!({"stage_id": "stg_won", "amount": 500000, "title": " ",
+                   "custom": {"conversation_id": "c1", "guests": "120"},
+                   "match_on": by_conversation}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    let deal = &second["deal"];
+    assert_eq!((&second["created"], &deal["id"]), (&json!(false), &id));
+    assert_eq!(deal["title"], "Düğün · Ayşe");
+    assert_eq!(deal["status"], "won");
+    assert!(deal["closed_at"].is_string());
+    assert_eq!(
+        deal["custom"],
+        json!({"conversation_id": "c1", "intent": "wedding", "guests": "120"})
+    );
+    let (_, events) = app.get("/v1/events?type=deal.stage_changed").await;
+    assert_eq!(events["data"][0]["entity_id"], id);
+
+    // Keys are tried in order; a later key can match and fill in an earlier one.
+    let both = json!(["custom.mihrabat_inquiry_id", "custom.conversation_id"]);
+    let (status, third) = app
+        .post(
+            "/v1/deals/upsert",
+            json!({"custom": {"mihrabat_inquiry_id": 7, "conversation_id": "c1"}, "match_on": both}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(third["deal"]["id"], id);
+    let (status, fourth) = app
+        .post(
+            "/v1/deals/upsert",
+            json!({"custom": {"mihrabat_inquiry_id": 7.0}, "match_on": both}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(fourth["deal"]["id"], id);
+
+    let (_, page) = app.get("/v1/deals").await;
+    assert_eq!(page["data"].as_array().unwrap().len(), 1);
+
+    for (body, problem) in [
+        (
+            json!({"custom": {"conversation_id": "c2"}, "match_on": by_conversation}),
+            "title is required to create a deal",
+        ),
+        (
+            json!({"title": "X", "custom": {"intent": "x"}, "match_on": ["custom.intent"]}),
+            "cannot match on custom.intent: it is not a unique custom field for deals",
+        ),
+        (
+            json!({"title": "X", "match_on": ["contact_id"]}),
+            "cannot match deals on \"contact_id\"",
+        ),
+        (
+            json!({"title": "X", "match_on": []}),
+            "match_on must list at least one key",
+        ),
+        (json!({"title": "X"}), "missing field `match_on`"),
+    ] {
+        let (status, error) = app.post("/v1/deals/upsert", body.clone()).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        let message = error["error"]["message"].as_str().unwrap();
+        assert!(message.contains(problem), "{message}");
+    }
+}

@@ -19,7 +19,7 @@ use crate::service::activities::{self, Activity, ActivityPatch, ActivityQuery, N
 use crate::service::api_keys::Principal;
 use crate::service::companies::{self, Company, CompanyPatch, CompanyQuery, NewCompany};
 use crate::service::contacts::{
-    self, Contact, ContactPatch, ContactQuery, ContactUpsert, NewContact, Upserted,
+    self, Contact, ContactPatch, ContactQuery, ContactUpsert, NewContact, UpsertedContact,
 };
 use crate::service::deals::{self, Deal, DealPatch, DealQuery, NewDeal};
 use crate::service::entity_type::EntityType;
@@ -274,7 +274,7 @@ impl RoloMcp {
         &self,
         Extension(parts): Extension<Parts>,
         Parameters(input): Parameters<ContactUpsert>,
-    ) -> ToolResult<Upserted> {
+    ) -> ToolResult<UpsertedContact> {
         contacts::upsert(&self.db, writer(&parts)?, self.default_region, input)
             .await
             .map(Json)

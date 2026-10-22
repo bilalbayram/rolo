@@ -1,8 +1,8 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sqlx::SqliteExecutor;
 use sqlx::types::Json;
+use sqlx::{SqliteConnection, SqliteExecutor};
 use utoipa::{IntoParams, ToSchema};
 
 use super::api_keys::Principal;
@@ -90,6 +90,65 @@ pub struct DealPatch {
     /// Merged into existing custom fields; keys set to null are removed.
     #[schema(value_type = Option<Object>)]
     pub custom: Option<CustomFields>,
+}
+
+/// A deal to create, or to merge into the existing deal it matches.
+#[derive(Debug, Clone, Deserialize, ToSchema, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DealUpsert {
+    /// Required when no deal matches.
+    pub title: Option<String>,
+    /// In minor currency units, e.g. cents.
+    pub amount: Option<i64>,
+    /// ISO 4217 code, e.g. `USD`.
+    pub currency: Option<String>,
+    /// On create, defaults to the first open stage of `pipeline_id`. On update,
+    /// moving to another stage follows the PATCH rules.
+    pub stage_id: Option<String>,
+    /// Used only when creating without `stage_id`. Defaults to the first pipeline.
+    pub pipeline_id: Option<String>,
+    pub company_id: Option<String>,
+    pub contact_id: Option<String>,
+    pub expected_close_date: Option<NaiveDate>,
+    /// User ID or `"me"`. On create, omit to default to the API key's user, or
+    /// null for no owner. On update, null leaves the owner unchanged.
+    #[serde(default, deserialize_with = "util::double_option")]
+    pub owner_id: Option<Option<String>>,
+    /// On update, merged into existing custom fields; keys set to null are removed.
+    #[serde(default)]
+    #[schema(value_type = Object)]
+    pub custom: CustomFields,
+    /// How to find the existing deal: `custom.<key>` for unique custom fields,
+    /// tried in order. The first key with a value in `custom` that matches a
+    /// deal wins.
+    #[schema(value_type = Vec<String>)]
+    #[schemars(with = "Vec<String>")]
+    pub match_on: Vec<DealMatchKey>,
+}
+
+/// A unique custom field [`upsert`] can find an existing deal by, written
+/// `custom.<key>`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub struct DealMatchKey(String);
+
+impl TryFrom<String> for DealMatchKey {
+    type Error = String;
+
+    fn try_from(key: String) -> std::result::Result<Self, Self::Error> {
+        key.strip_prefix("custom.")
+            .filter(|custom_key| !custom_key.is_empty())
+            .map(|custom_key| DealMatchKey(custom_key.to_string()))
+            .ok_or_else(|| format!("cannot match deals on {key:?}; expected custom.<key>"))
+    }
+}
+
+/// The result of [`upsert`].
+#[derive(Debug, Serialize, ToSchema, JsonSchema)]
+pub struct UpsertedDeal {
+    pub deal: Deal,
+    /// True if a new deal was created; false if an existing one was updated.
+    pub created: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, IntoParams, JsonSchema)]
@@ -341,6 +400,13 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
 }
 
 pub async fn create(db: &Db, caller: &Principal, input: NewDeal) -> Result<Deal> {
+    let mut tx = db.writer.begin().await?;
+    let deal = insert(&mut tx, caller, input).await?;
+    tx.commit().await?;
+    Ok(deal)
+}
+
+async fn insert(tx: &mut SqliteConnection, caller: &Principal, input: NewDeal) -> Result<Deal> {
     let title = util::required(input.title, "title")?;
     let currency = normalize_currency(input.currency)?;
     let now = Utc::now();
@@ -349,11 +415,9 @@ pub async fn create(db: &Db, caller: &Principal, input: NewDeal) -> Result<Deal>
     let contact_id = util::non_empty(input.contact_id);
     let owner_id = users::owner_for_new(input.owner_id, caller)?;
 
-    let mut tx = db.writer.begin().await?;
-    users::ensure_assignable(&mut tx, owner_id.as_deref()).await?;
+    users::ensure_assignable(tx, owner_id.as_deref()).await?;
     let custom =
-        field_definitions::validate(&mut tx, EntityType::Deal, input.custom, Write::Create(&id))
-            .await?;
+        field_definitions::validate(tx, EntityType::Deal, input.custom, Write::Create(&id)).await?;
     let custom = Json(custom);
     let stage = match util::non_empty(input.stage_id) {
         Some(stage_id) => pipelines::get_stage(&mut *tx, &stage_id).await?,
@@ -385,15 +449,25 @@ pub async fn create(db: &Db, caller: &Principal, input: NewDeal) -> Result<Deal>
     .execute(&mut *tx)
     .await?;
     let deal = get(&mut *tx, &id).await?;
-    events::record(&mut tx, "deal.created", &id, &deal).await?;
-    tx.commit().await?;
+    events::record(tx, "deal.created", &id, &deal).await?;
     Ok(deal)
 }
 
 pub async fn update(db: &Db, caller: &Principal, id: &str, patch: DealPatch) -> Result<Deal> {
+    let mut tx = db.writer.begin().await?;
+    let deal = apply(&mut tx, caller, id, patch).await?;
+    tx.commit().await?;
+    Ok(deal)
+}
+
+async fn apply(
+    tx: &mut SqliteConnection,
+    caller: &Principal,
+    id: &str,
+    patch: DealPatch,
+) -> Result<Deal> {
     let owner_id = users::owner_patch(patch.owner_id, caller)?;
     let now = Utc::now();
-    let mut tx = db.writer.begin().await?;
     let mut deal = get(&mut *tx, id).await?;
     let from_stage_id = deal.stage_id.clone();
 
@@ -417,13 +491,12 @@ pub async fn update(db: &Db, caller: &Principal, id: &str, patch: DealPatch) -> 
     util::patch(&mut deal.contact_id, patch.contact_id.map(util::non_empty));
     util::patch(&mut deal.expected_close_date, patch.expected_close_date);
     if let Some(owner_id) = owner_id {
-        users::ensure_assignable(&mut tx, owner_id.as_deref()).await?;
+        users::ensure_assignable(tx, owner_id.as_deref()).await?;
         deal.owner_id = owner_id;
     }
     if let Some(update) = patch.custom {
         let update =
-            field_definitions::validate(&mut tx, EntityType::Deal, update, Write::Update(id))
-                .await?;
+            field_definitions::validate(tx, EntityType::Deal, update, Write::Update(id)).await?;
         deal.custom.merge(update);
     }
     deal.updated_at = now;
@@ -448,17 +521,91 @@ pub async fn update(db: &Db, caller: &Principal, id: &str, patch: DealPatch) -> 
     )
     .execute(&mut *tx)
     .await?;
-    events::record(&mut tx, "deal.updated", id, &deal).await?;
+    events::record(tx, "deal.updated", id, &deal).await?;
     if deal.stage_id != from_stage_id {
         let change = StageChanged {
             deal: &deal,
             from_stage_id: &from_stage_id,
             to_stage_id: &deal.stage_id,
         };
-        events::record(&mut tx, "deal.stage_changed", id, &change).await?;
+        events::record(tx, "deal.stage_changed", id, &change).await?;
     }
-    tx.commit().await?;
     Ok(deal)
+}
+
+/// Update the first existing deal that `input.match_on` finds, changing only
+/// the fields `input` sets, or create the deal if none matches. Moving stages,
+/// owners and custom fields follow the same rules as PATCH.
+pub async fn upsert(db: &Db, caller: &Principal, input: DealUpsert) -> Result<UpsertedDeal> {
+    if input.match_on.is_empty() {
+        return Err(Error::Invalid("match_on must list at least one key".into()));
+    }
+    let mut tx = db.writer.begin().await?;
+    let upserted = match find_match(&mut tx, &input).await? {
+        Some(id) => {
+            let patch = DealPatch {
+                title: util::non_empty(input.title),
+                amount: input.amount.map(Some),
+                currency: util::non_empty(input.currency).map(Some),
+                stage_id: util::non_empty(input.stage_id),
+                company_id: util::non_empty(input.company_id).map(Some),
+                contact_id: util::non_empty(input.contact_id).map(Some),
+                expected_close_date: input.expected_close_date.map(Some),
+                owner_id: input.owner_id.flatten().map(Some),
+                custom: Some(input.custom),
+            };
+            UpsertedDeal {
+                deal: apply(&mut tx, caller, &id, patch).await?,
+                created: false,
+            }
+        }
+        None => {
+            let title = input.title.ok_or_else(|| {
+                Error::Invalid("title is required to create a deal; no deal matched".into())
+            })?;
+            let new = NewDeal {
+                title,
+                amount: input.amount,
+                currency: input.currency,
+                stage_id: input.stage_id,
+                pipeline_id: input.pipeline_id,
+                company_id: input.company_id,
+                contact_id: input.contact_id,
+                expected_close_date: input.expected_close_date,
+                owner_id: input.owner_id,
+                custom: input.custom,
+            };
+            UpsertedDeal {
+                deal: insert(&mut tx, caller, new).await?,
+                created: true,
+            }
+        }
+    };
+    tx.commit().await?;
+    Ok(upserted)
+}
+
+/// The first deal whose unique custom field in `input.match_on` has the value
+/// `input.custom` gives it.
+async fn find_match(conn: &mut SqliteConnection, input: &DealUpsert) -> Result<Option<String>> {
+    // Check every key up front, so a bad key fails even without a value.
+    let mut definitions = Vec::new();
+    for DealMatchKey(key) in &input.match_on {
+        definitions.push(field_definitions::for_matching(conn, EntityType::Deal, key).await?);
+    }
+    for definition in &definitions {
+        let Some(value) = input
+            .custom
+            .get(&definition.key)
+            .filter(|value| !value.is_null())
+        else {
+            continue;
+        };
+        if let Some(id) = field_definitions::find_by_unique_value(conn, definition, value).await? {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
 }
 
 pub async fn delete(db: &Db, id: &str) -> Result<()> {

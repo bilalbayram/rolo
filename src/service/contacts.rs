@@ -152,7 +152,7 @@ impl TryFrom<String> for MatchKey {
 
 /// The result of [`upsert`].
 #[derive(Debug, Serialize, ToSchema, JsonSchema)]
-pub struct Upserted {
+pub struct UpsertedContact {
     pub contact: Contact,
     /// True if a new contact was created; false if an existing one was updated.
     pub created: bool,
@@ -418,7 +418,7 @@ pub async fn upsert(
     caller: &Principal,
     region: Region,
     input: ContactUpsert,
-) -> Result<Upserted> {
+) -> Result<UpsertedContact> {
     let match_on = input
         .match_on
         .clone()
@@ -439,7 +439,7 @@ pub async fn upsert(
                 owner_id: input.owner_id.flatten().map(Some),
                 custom: Some(input.custom),
             };
-            Upserted {
+            UpsertedContact {
                 contact: apply(&mut tx, caller, region, &id, patch).await?,
                 created: false,
             }
@@ -455,7 +455,7 @@ pub async fn upsert(
                 owner_id: input.owner_id,
                 custom: input.custom,
             };
-            Upserted {
+            UpsertedContact {
                 contact: insert(&mut tx, caller, region, new).await?,
                 created: true,
             }
@@ -476,15 +476,8 @@ async fn find_match(
     let mut definitions = Vec::new();
     for key in match_on {
         if let MatchKey::Custom(key) = key {
-            let definition = field_definitions::get_by_key(conn, EntityType::Contact, key)
-                .await?
-                .filter(|definition| definition.unique)
-                .ok_or_else(|| {
-                    Error::Invalid(format!(
-                        "cannot match on custom.{key}: it is not a unique custom field for contacts"
-                    ))
-                })?;
-            definitions.push(definition);
+            definitions
+                .push(field_definitions::for_matching(conn, EntityType::Contact, key).await?);
         }
     }
 
@@ -512,8 +505,7 @@ async fn find_match(
                         .iter()
                         .find(|definition| &definition.key == key)
                         .expect("custom match keys were checked above");
-                    let value = field_definitions::normalize_value(definition, value.clone())?;
-                    field_definitions::find_by_value(conn, EntityType::Contact, key, &value).await?
+                    field_definitions::find_by_unique_value(conn, definition, value).await?
                 }
                 None => None,
             },

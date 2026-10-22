@@ -149,6 +149,19 @@ curl -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
 - **Conflicts:** if the body matches one contact by email but its phone belongs to another, it returns `409`.
 - **For agents:** the MCP tool is `upsert_contact`, and the server instructions recommend it for recording people.
 
+`POST /v1/deals/upsert` does the same for deals that carry an external ID in
+a unique custom field, such as a conversation or an imported inquiry:
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+     -d '{"title": "Düğün · Ayşe", "custom": {"conversation_id": "c_81"}, "match_on": ["custom.conversation_id"]}' \
+     http://127.0.0.1:3000/v1/deals/upsert
+# 201 {"deal": {...}, "created": true}, then 200 {"deal": {...}, "created": false}
+```
+
+- **Body:** the fields of `POST /v1/deals`, with `title` needed only when creating, plus a required `match_on` list of `"custom.<key>"` for unique custom fields.
+- **When a deal matches,** the fields the body sets change and `custom` is merged. A new `stage_id` moves the deal as with PATCH, which sets or clears `closed_at` and records `deal.stage_changed`. `pipeline_id` applies only when creating.
+
 ## Phone numbers
 
 Contact phone numbers are normalized to [E.164](https://en.wikipedia.org/wiki/E.164)

@@ -10,7 +10,7 @@ use crate::error::{ErrorBody, Result};
 use crate::service::Page;
 use crate::service::api_keys::Principal;
 use crate::service::contacts::{
-    self, Contact, ContactPatch, ContactQuery, ContactUpsert, NewContact, Upserted,
+    self, Contact, ContactPatch, ContactQuery, ContactUpsert, NewContact, UpsertedContact,
 };
 
 pub fn router() -> OpenApiRouter<AppState> {
@@ -59,12 +59,12 @@ async fn create(
 /// merged; otherwise the contact is created. Returns 200 with `created: false`
 /// after an update, 201 with `created: true` after a create.
 #[utoipa::path(post, path = "/contacts/upsert", tag = "contacts", request_body = ContactUpsert,
-    responses((status = 200, body = Upserted), (status = 201, body = Upserted), (status = 409, body = ErrorBody), (status = 422, body = ErrorBody)))]
+    responses((status = 200, body = UpsertedContact), (status = 201, body = UpsertedContact), (status = 409, body = ErrorBody), (status = 422, body = ErrorBody)))]
 async fn upsert(
     State(state): State<AppState>,
     Extension(caller): Extension<Principal>,
     Body(input): Body<ContactUpsert>,
-) -> Result<(StatusCode, Json<Upserted>)> {
+) -> Result<(StatusCode, Json<UpsertedContact>)> {
     let upserted = contacts::upsert(&state.db, &caller, state.default_region, input).await?;
     let status = if upserted.created {
         StatusCode::CREATED

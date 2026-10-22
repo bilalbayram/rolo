@@ -468,6 +468,35 @@ fn from_query_string(field_type: FieldType, value: Value) -> Value {
     parsed.unwrap_or(value)
 }
 
+/// The definition of `key` for `entity_type`, if records can be matched on
+/// it, which needs a unique field.
+pub async fn for_matching(
+    conn: &mut SqliteConnection,
+    entity_type: EntityType,
+    key: &str,
+) -> Result<FieldDefinition> {
+    get_by_key(conn, entity_type, key)
+        .await?
+        .filter(|definition| definition.unique)
+        .ok_or_else(|| {
+            Error::Invalid(format!(
+                "cannot match on custom.{key}: it is not a unique custom field for {}s",
+                entity_type.name()
+            ))
+        })
+}
+
+/// The record whose unique field `definition` holds `value`, after
+/// normalizing `value` as on write.
+pub async fn find_by_unique_value(
+    conn: &mut SqliteConnection,
+    definition: &FieldDefinition,
+    value: &Value,
+) -> Result<Option<String>> {
+    let value = normalize_value(definition, value.clone())?;
+    find_by_value(conn, definition.entity_type, &definition.key, &value).await
+}
+
 /// The first record of `entity_type` whose custom field `key` equals `value`.
 pub async fn find_by_value(
     conn: &mut SqliteConnection,

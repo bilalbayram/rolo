@@ -9,11 +9,12 @@ use crate::api::extract::{Body, FilterParams, Id};
 use crate::error::{ErrorBody, Result};
 use crate::service::Page;
 use crate::service::api_keys::Principal;
-use crate::service::deals::{self, Deal, DealPatch, DealQuery, NewDeal};
+use crate::service::deals::{self, Deal, DealPatch, DealQuery, DealUpsert, NewDeal, UpsertedDeal};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list, create))
+        .routes(routes!(upsert))
         .routes(routes!(get, update, delete))
 }
 
@@ -50,6 +51,29 @@ async fn create(
         StatusCode::CREATED,
         Json(deals::create(&state.db, &caller, input).await?),
     ))
+}
+
+/// Create or update a deal
+///
+/// Finds an existing deal by the unique custom fields in `match_on`, e.g.
+/// `["custom.conversation_id"]`. If one matches, only the fields this body sets
+/// are changed, `custom` is merged, and a new `stage_id` moves the deal as in
+/// PATCH; otherwise the deal is created, which needs `title`. Returns 200 with
+/// `created: false` after an update, 201 with `created: true` after a create.
+#[utoipa::path(post, path = "/deals/upsert", tag = "deals", request_body = DealUpsert,
+    responses((status = 200, body = UpsertedDeal), (status = 201, body = UpsertedDeal), (status = 409, body = ErrorBody), (status = 422, body = ErrorBody)))]
+async fn upsert(
+    State(state): State<AppState>,
+    Extension(caller): Extension<Principal>,
+    Body(input): Body<DealUpsert>,
+) -> Result<(StatusCode, Json<UpsertedDeal>)> {
+    let upserted = deals::upsert(&state.db, &caller, input).await?;
+    let status = if upserted.created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(upserted)))
 }
 
 /// Get a deal
