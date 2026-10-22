@@ -1,15 +1,14 @@
-use axum::{Json, extract::State, http::StatusCode};
-use utoipa_axum::{router::OpenApiRouter, routes};
+use axum::Json;
+use axum::extract::State;
+use axum::http::StatusCode;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
-use crate::{
-    AppState,
-    api::{Body, Id, Params},
-    error::{ErrorBody, Result},
-    service::{
-        Page,
-        contacts::{self, Contact, ContactPatch, ContactQuery, NewContact},
-    },
-};
+use crate::AppState;
+use crate::api::extract::{Body, Id, Params};
+use crate::error::{ErrorBody, Result};
+use crate::service::Page;
+use crate::service::contacts::{self, Contact, ContactPatch, ContactQuery, NewContact};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()

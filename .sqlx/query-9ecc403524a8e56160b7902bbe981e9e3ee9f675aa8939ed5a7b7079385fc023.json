@@ -1,0 +1,170 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT d.id, d.webhook_id, d.event_seq, e.id AS event_id, e.type AS event_type,\n                  d.status AS \"status: DeliveryStatus\", d.attempts,\n                  d.next_attempt_at AS \"next_attempt_at: DateTime<Utc>\",\n                  d.last_status_code, d.last_error,\n                  d.delivered_at AS \"delivered_at: DateTime<Utc>\",\n                  d.created_at AS \"created_at: DateTime<Utc>\",\n                  d.updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM webhook_deliveries d JOIN events e ON e.seq = d.event_seq\n           WHERE d.webhook_id = ? AND d.id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhook_deliveries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "webhook_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhook_deliveries",
+            "name": "webhook_id"
+          }
+        }
+      },
+      {
+        "name": "event_seq",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "webhook_deliveries",
+            "name": "event_seq"
+          }
+        }
+      },
+      {
+        "name": "event_id",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "event_type",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "type"
+          }
+        }
+      },
+      {
+        "name": "status: DeliveryStatus",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhook_deliveries",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "name": "attempts",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "webhook_deliveries",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "name": "next_attempt_at: DateTime<Utc>",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhook_deliveries",
+            "name": "next_attempt_at"
+          }
+        }
+      },
+      {
+        "name": "last_status_code",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "webhook_deliveries",
+            "name": "last_status_code"
+          }
+        }
+      },
+      {
+        "name": "last_error",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhook_deliveries",
+            "name": "last_error"
+          }
+        }
+      },
+      {
+        "name": "delivered_at: DateTime<Utc>",
+        "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhook_deliveries",
+            "name": "delivered_at"
+          }
+        }
+      },
+      {
+        "name": "created_at: DateTime<Utc>",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhook_deliveries",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "updated_at: DateTime<Utc>",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhook_deliveries",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "9ecc403524a8e56160b7902bbe981e9e3ee9f675aa8939ed5a7b7079385fc023"
+}

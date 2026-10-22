@@ -1,15 +1,15 @@
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sqlx::{SqliteExecutor, types::Json};
+use sqlx::SqliteExecutor;
+use sqlx::types::Json;
 use utoipa::{IntoParams, ToSchema};
 
-use super::{Page, events, like_pattern};
-use crate::{
-    db::Db,
-    error::{Error, Result},
-    util::{self, Custom, double_option, non_empty},
-};
+use super::{Page, events};
+use crate::custom_fields::CustomFields;
+use crate::db::Db;
+use crate::error::{Error, Result};
+use crate::util;
 
 #[derive(Debug, Clone, Serialize, ToSchema, JsonSchema)]
 pub struct Contact {
@@ -23,8 +23,8 @@ pub struct Contact {
     pub title: Option<String>,
     pub company_id: Option<String>,
     #[schema(value_type = Object)]
-    #[schemars(with = "Custom")]
-    pub custom: Json<Custom>,
+    #[schemars(with = "CustomFields")]
+    pub custom: Json<CustomFields>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -44,28 +44,28 @@ pub struct NewContact {
     /// Arbitrary user-defined fields.
     #[serde(default)]
     #[schema(value_type = Object)]
-    pub custom: Custom,
+    pub custom: CustomFields,
 }
 
 /// Omitted fields are left unchanged; nullable fields set to null are cleared.
 #[derive(Debug, Default, Deserialize, ToSchema, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ContactPatch {
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub first_name: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub last_name: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub email: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub phone: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub title: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub company_id: Option<Option<String>>,
     /// Merged into existing custom fields; keys set to null are removed.
     #[schema(value_type = Option<Object>)]
-    pub custom: Option<Custom>,
+    pub custom: Option<CustomFields>,
 }
 
 #[derive(Debug, Default, Deserialize, IntoParams, JsonSchema)]
@@ -81,7 +81,7 @@ pub struct ContactQuery {
 }
 
 fn normalize_email(email: Option<String>) -> Result<Option<String>> {
-    let email = non_empty(email).map(|e| e.to_lowercase());
+    let email = util::non_empty(email).map(|e| e.to_lowercase());
     if let Some(e) = &email
         && !e.contains('@')
     {
@@ -99,29 +99,29 @@ fn validate(contact: &Contact) -> Result<()> {
     Ok(())
 }
 
-pub async fn get(ex: impl SqliteExecutor<'_>, id: &str) -> Result<Contact> {
+pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Contact> {
     sqlx::query_as!(
         Contact,
         r#"SELECT id, first_name, last_name, email, phone, title, company_id,
-                  custom AS "custom: Json<Custom>",
+                  custom AS "custom: Json<CustomFields>",
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
            FROM contacts WHERE id = ?"#,
         id,
     )
-    .fetch_optional(ex)
+    .fetch_optional(executor)
     .await?
     .ok_or(Error::NotFound("contact"))
 }
 
 pub async fn list(db: &Db, query: ContactQuery) -> Result<Page<Contact>> {
     let limit = util::clamp_limit(query.limit);
-    let pattern = like_pattern(query.q);
+    let pattern = util::like_pattern(query.q);
     let fetch = limit + 1;
     let rows = sqlx::query_as!(
         Contact,
         r#"SELECT id, first_name, last_name, email, phone, title, company_id,
-                  custom AS "custom: Json<Custom>",
+                  custom AS "custom: Json<CustomFields>",
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
            FROM contacts
@@ -147,12 +147,12 @@ pub async fn create(db: &Db, input: NewContact) -> Result<Contact> {
     let now = Utc::now();
     let contact = Contact {
         id: util::new_id("con"),
-        first_name: non_empty(input.first_name),
-        last_name: non_empty(input.last_name),
+        first_name: util::non_empty(input.first_name),
+        last_name: util::non_empty(input.last_name),
         email: normalize_email(input.email)?,
-        phone: non_empty(input.phone),
-        title: non_empty(input.title),
-        company_id: non_empty(input.company_id),
+        phone: util::non_empty(input.phone),
+        title: util::non_empty(input.title),
+        company_id: util::non_empty(input.company_id),
         custom: Json(input.custom),
         created_at: now,
         updated_at: now,
@@ -185,15 +185,23 @@ pub async fn create(db: &Db, input: NewContact) -> Result<Contact> {
 pub async fn update(db: &Db, id: &str, patch: ContactPatch) -> Result<Contact> {
     let mut tx = db.writer.begin().await?;
     let mut contact = get(&mut *tx, id).await?;
-    util::patch(&mut contact.first_name, patch.first_name.map(non_empty));
-    util::patch(&mut contact.last_name, patch.last_name.map(non_empty));
+    util::patch(
+        &mut contact.first_name,
+        patch.first_name.map(util::non_empty),
+    );
+    util::patch(&mut contact.last_name, patch.last_name.map(util::non_empty));
     if let Some(email) = patch.email {
         contact.email = normalize_email(email)?;
     }
-    util::patch(&mut contact.phone, patch.phone.map(non_empty));
-    util::patch(&mut contact.title, patch.title.map(non_empty));
-    util::patch(&mut contact.company_id, patch.company_id.map(non_empty));
-    util::merge_custom(&mut contact.custom, patch.custom);
+    util::patch(&mut contact.phone, patch.phone.map(util::non_empty));
+    util::patch(&mut contact.title, patch.title.map(util::non_empty));
+    util::patch(
+        &mut contact.company_id,
+        patch.company_id.map(util::non_empty),
+    );
+    if let Some(update) = patch.custom {
+        contact.custom.merge(update);
+    }
     contact.updated_at = Utc::now();
     validate(&contact)?;
 

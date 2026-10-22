@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, name, domain,\n                  custom AS \"custom: Json<Custom>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM companies WHERE id = ?",
+  "query": "SELECT id, url, description,\n                  event_types AS \"event_types: Json<Vec<String>>\",\n                  enabled AS \"enabled: bool\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM webhooks WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -9,62 +9,73 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "companies",
+            "table": "webhooks",
             "name": "id"
           }
         }
       },
       {
-        "name": "name",
+        "name": "url",
         "ordinal": 1,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "companies",
-            "name": "name"
+            "table": "webhooks",
+            "name": "url"
           }
         }
       },
       {
-        "name": "domain",
+        "name": "description",
         "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "companies",
-            "name": "domain"
+            "table": "webhooks",
+            "name": "description"
           }
         }
       },
       {
-        "name": "custom: Json<Custom>",
+        "name": "event_types: Json<Vec<String>>",
         "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "companies",
-            "name": "custom"
+            "table": "webhooks",
+            "name": "event_types"
+          }
+        }
+      },
+      {
+        "name": "enabled: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "webhooks",
+            "name": "enabled"
           }
         }
       },
       {
         "name": "created_at: DateTime<Utc>",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "companies",
+            "table": "webhooks",
             "name": "created_at"
           }
         }
       },
       {
         "name": "updated_at: DateTime<Utc>",
-        "ordinal": 5,
+        "ordinal": 6,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "companies",
+            "table": "webhooks",
             "name": "updated_at"
           }
         }
@@ -79,8 +90,9 @@
       true,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "8c74a0121396d34761b015f52182a46c11dd5d16c6a67d6f1540874381a03bb4"
+  "hash": "7ed515d00249e115248ba9baff5f2edf759c521334b4e50baca20949a1b53ba1"
 }

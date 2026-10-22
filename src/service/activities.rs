@@ -1,15 +1,15 @@
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sqlx::{SqliteExecutor, types::Json};
+use sqlx::SqliteExecutor;
+use sqlx::types::Json;
 use utoipa::{IntoParams, ToSchema};
 
 use super::{Page, events};
-use crate::{
-    db::Db,
-    error::{Error, Result},
-    util::{self, Custom, double_option, non_empty},
-};
+use crate::custom_fields::CustomFields;
+use crate::db::Db;
+use crate::error::{Error, Result};
+use crate::util;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, ToSchema, JsonSchema,
@@ -41,8 +41,8 @@ pub struct Activity {
     /// For tasks: when it was done. Null means open.
     pub completed_at: Option<DateTime<Utc>>,
     #[schema(value_type = Object)]
-    #[schemars(with = "Custom")]
-    pub custom: Json<Custom>,
+    #[schemars(with = "CustomFields")]
+    pub custom: Json<CustomFields>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -64,7 +64,7 @@ pub struct NewActivity {
     /// Arbitrary user-defined fields.
     #[serde(default)]
     #[schema(value_type = Object)]
-    pub custom: Custom,
+    pub custom: CustomFields,
 }
 
 /// Omitted fields are left unchanged; nullable fields set to null are cleared.
@@ -72,25 +72,25 @@ pub struct NewActivity {
 #[serde(deny_unknown_fields)]
 pub struct ActivityPatch {
     pub kind: Option<ActivityKind>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub subject: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub body: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub contact_id: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub company_id: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub deal_id: Option<Option<String>>,
     pub occurred_at: Option<DateTime<Utc>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub due_at: Option<Option<DateTime<Utc>>>,
     /// Set to mark a task done, null to reopen it.
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub completed_at: Option<Option<DateTime<Utc>>>,
     /// Merged into existing custom fields; keys set to null are removed.
     #[schema(value_type = Option<Object>)]
-    pub custom: Option<Custom>,
+    pub custom: Option<CustomFields>,
 }
 
 #[derive(Debug, Default, Deserialize, IntoParams, JsonSchema)]
@@ -118,20 +118,20 @@ fn validate(activity: &Activity) -> Result<()> {
     Ok(())
 }
 
-pub async fn get(ex: impl SqliteExecutor<'_>, id: &str) -> Result<Activity> {
+pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Activity> {
     sqlx::query_as!(
         Activity,
         r#"SELECT id, kind AS "kind: ActivityKind", subject, body, contact_id, company_id, deal_id,
                   occurred_at AS "occurred_at: DateTime<Utc>",
                   due_at AS "due_at: DateTime<Utc>",
                   completed_at AS "completed_at: DateTime<Utc>",
-                  custom AS "custom: Json<Custom>",
+                  custom AS "custom: Json<CustomFields>",
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
            FROM activities WHERE id = ?"#,
         id,
     )
-    .fetch_optional(ex)
+    .fetch_optional(executor)
     .await?
     .ok_or(Error::NotFound("activity"))
 }
@@ -146,7 +146,7 @@ pub async fn list(db: &Db, query: ActivityQuery) -> Result<Page<Activity>> {
                   occurred_at AS "occurred_at: DateTime<Utc>",
                   due_at AS "due_at: DateTime<Utc>",
                   completed_at AS "completed_at: DateTime<Utc>",
-                  custom AS "custom: Json<Custom>",
+                  custom AS "custom: Json<CustomFields>",
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
            FROM activities
@@ -176,11 +176,11 @@ pub async fn create(db: &Db, input: NewActivity) -> Result<Activity> {
     let activity = Activity {
         id: util::new_id("act"),
         kind: input.kind,
-        subject: non_empty(input.subject),
-        body: non_empty(input.body),
-        contact_id: non_empty(input.contact_id),
-        company_id: non_empty(input.company_id),
-        deal_id: non_empty(input.deal_id),
+        subject: util::non_empty(input.subject),
+        body: util::non_empty(input.body),
+        contact_id: util::non_empty(input.contact_id),
+        company_id: util::non_empty(input.company_id),
+        deal_id: util::non_empty(input.deal_id),
         occurred_at: input.occurred_at.unwrap_or(now),
         due_at: input.due_at,
         completed_at: input.completed_at,
@@ -223,17 +223,25 @@ pub async fn update(db: &Db, id: &str, patch: ActivityPatch) -> Result<Activity>
     if let Some(kind) = patch.kind {
         activity.kind = kind;
     }
-    util::patch(&mut activity.subject, patch.subject.map(non_empty));
-    util::patch(&mut activity.body, patch.body.map(non_empty));
-    util::patch(&mut activity.contact_id, patch.contact_id.map(non_empty));
-    util::patch(&mut activity.company_id, patch.company_id.map(non_empty));
-    util::patch(&mut activity.deal_id, patch.deal_id.map(non_empty));
+    util::patch(&mut activity.subject, patch.subject.map(util::non_empty));
+    util::patch(&mut activity.body, patch.body.map(util::non_empty));
+    util::patch(
+        &mut activity.contact_id,
+        patch.contact_id.map(util::non_empty),
+    );
+    util::patch(
+        &mut activity.company_id,
+        patch.company_id.map(util::non_empty),
+    );
+    util::patch(&mut activity.deal_id, patch.deal_id.map(util::non_empty));
     if let Some(occurred_at) = patch.occurred_at {
         activity.occurred_at = occurred_at;
     }
     util::patch(&mut activity.due_at, patch.due_at);
     util::patch(&mut activity.completed_at, patch.completed_at);
-    util::merge_custom(&mut activity.custom, patch.custom);
+    if let Some(update) = patch.custom {
+        activity.custom.merge(update);
+    }
     activity.updated_at = Utc::now();
     validate(&activity)?;
 

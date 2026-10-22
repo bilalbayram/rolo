@@ -7,7 +7,8 @@ over the same data:
 - **MCP server** at `/mcp` (streamable HTTP) with tools curated for AI agents
 
 Every mutation is also appended to a change feed (`/v1/events`) in the same
-transaction, so integrations can sync without missing anything.
+transaction and delivered to signed webhooks, so integrations can sync
+without missing anything.
 
 MIT licensed.
 
@@ -32,9 +33,13 @@ Configuration (flags or env vars):
 | `--db` | `ROLO_DB` | `rolo.db` |
 | `--addr` | `ROLO_ADDR` | `127.0.0.1:3000` |
 | `--allowed-host` | `ROLO_ALLOWED_HOSTS` (comma-separated) | loopback only |
+| `--allow-private-webhooks` | `ROLO_ALLOW_PRIVATE_WEBHOOKS` | off |
 
 `--allowed-host` guards the MCP endpoint against DNS rebinding. Set it to your
 public hostname when running rolo behind a domain.
+
+Run one `rolo serve` per database file, because the webhook worker assumes it
+is the only one sending.
 
 ## Connect an agent
 
@@ -91,7 +96,35 @@ curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:3000/v1/events?after=0&
 Events (`contact.created`, `deal.stage_changed`, `company.deleted`, ...) carry a
 snapshot of the record. Store `next_after` and pass it as `after` on the next poll.
 
+## Webhooks
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+     -d '{"url": "https://example.com/hooks/rolo", "event_types": ["deal.", "contact.created"]}' \
+     http://127.0.0.1:3000/v1/webhooks
+```
+
+- **Payload:** each event is POSTed as JSON, in the same shape as `/v1/events`. A new webhook gets events from the moment it's created, not history. `event_types` is a list of type prefixes; leave it empty to get everything.
+- **Signing:** requests follow [Standard Webhooks](https://www.standardwebhooks.com/). The response that creates a webhook includes a `whsec_...` secret, shown only once. Verify the `webhook-signature` header against `webhook-id`, `webhook-timestamp` and the raw body, using any Standard Webhooks library. `webhook-id` stays the same across retries, so you can use it to ignore duplicates.
+- **Retries:** any non-2xx response, or no response within 10s, is retried with backoff (10s, 1m, 5m, 30m, 2h, 6h, 12h), 8 attempts in total over about 21 hours. Delivery order is not guaranteed; use `seq` or `/v1/events` if order matters.
+- **History and replays:** `GET /v1/webhooks/{id}/deliveries` lists attempts and errors, and `POST .../deliveries/{delivery_id}/retry` re-sends one.
+- **Pausing:** `PATCH {"enabled": false}` pauses a webhook. Re-enabling it delivers everything it missed.
+- **Security:**
+  - Destinations on loopback, private, link-local and other internal ranges are blocked, unless you start the server with `--allow-private-webhooks`.
+  - Hostnames are checked as they're resolved, so DNS tricks can't get around the block.
+  - Redirects are not followed.
+  - Webhooks can only be managed over REST with a write key. There are no MCP tools for them, so an agent can't create a way to send your data out.
+
 ## Development
+
+Code follows the [Google Rust style guide](https://google.github.io/styleguide/rustguide.html).
+Its rustfmt settings (`rustfmt.toml`) include unstable options, so format with
+nightly rustfmt (`rustup toolchain install nightly --profile minimal --component rustfmt`):
+
+```sh
+cargo +nightly fmt
+cargo clippy --all-targets
+```
 
 Queries are checked at compile time against the schema by `sqlx`. The checked-in
 `.sqlx/` directory lets the project build without a database. When you change
@@ -106,11 +139,11 @@ cargo test
 
 Layout: `src/service/` holds the business logic, and every write there also
 records an event. `src/api/` (REST) and `src/mcp.rs` (MCP) are thin wrappers
-over it. Migrations live in `migrations/`.
+over it. `src/delivery.rs` is the webhook worker. Migrations live in `migrations/`.
 
 ## Roadmap
 
-- Webhook subscriptions delivered from the event outbox
+- Webhook secret rotation, and automatically disabling endpoints that keep failing
 - FTS5 full-text search
 - Custom field definitions (typed and validated) on top of `custom`
 - Users / record owners

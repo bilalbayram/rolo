@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE webhook_deliveries\n                     SET status = 'succeeded', attempts = ?, next_attempt_at = NULL,\n                         last_status_code = ?, last_error = NULL, delivered_at = ?, updated_at = ?\n                     WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "4dca6aeeda316aeb9e198091bfcd962ae1c7972a94082aa1df55e2ef60ecf38a"
+}

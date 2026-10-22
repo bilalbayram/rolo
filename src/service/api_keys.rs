@@ -1,12 +1,12 @@
+use std::fmt;
+
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
-use crate::{
-    db::Db,
-    error::{Error, Result},
-    util,
-};
+use crate::db::Db;
+use crate::error::{Error, Result};
+use crate::util;
 
 const TOKEN_PREFIX: &str = "rolo_";
 
@@ -33,6 +33,15 @@ pub struct ApiKey {
     pub revoked_at: Option<DateTime<Utc>>,
 }
 
+impl fmt::Display for Scope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad(match self {
+            Scope::Read => "read",
+            Scope::Write => "write",
+        })
+    }
+}
+
 /// The authenticated caller, attached to each request by the auth middleware.
 #[derive(Debug, Clone)]
 pub struct Principal {
@@ -50,6 +59,7 @@ impl Principal {
 }
 
 fn hash(token: &str) -> String {
+    use sha2::Digest as _;
     hex::encode(Sha256::digest(token.as_bytes()))
 }
 

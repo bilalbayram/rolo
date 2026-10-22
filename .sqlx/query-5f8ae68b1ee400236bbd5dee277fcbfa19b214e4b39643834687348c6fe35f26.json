@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, first_name, last_name, email, phone, title, company_id,\n                  custom AS \"custom: Json<Custom>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM contacts WHERE id = ?",
+  "query": "SELECT id, first_name, last_name, email, phone, title, company_id,\n                  custom AS \"custom: Json<CustomFields>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM contacts\n           WHERE (?1 IS NULL\n                  OR (coalesce(first_name, '') || ' ' || coalesce(last_name, '')) LIKE ?1 ESCAPE '\\'\n                  OR email LIKE ?1 ESCAPE '\\'\n                  OR phone LIKE ?1 ESCAPE '\\')\n             AND (?2 IS NULL OR company_id = ?2)\n             AND (?3 IS NULL OR id > ?3)\n           ORDER BY id\n           LIMIT ?4",
   "describe": {
     "columns": [
       {
@@ -81,7 +81,7 @@
         }
       },
       {
-        "name": "custom: Json<Custom>",
+        "name": "custom: Json<CustomFields>",
         "ordinal": 7,
         "type_info": "Text",
         "origin": {
@@ -115,7 +115,7 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 4
     },
     "nullable": [
       false,
@@ -130,5 +130,5 @@
       false
     ]
   },
-  "hash": "6fd01e4959f2b8af5fe9a4a811c2e0f78b68aed8acc2d973b19dcda2ac9c85f8"
+  "hash": "5f8ae68b1ee400236bbd5dee277fcbfa19b214e4b39643834687348c6fe35f26"
 }

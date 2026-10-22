@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE webhooks SET cursor_seq = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "eef8c6aab0226a26b8cfd8fd3361fc16b18473f9ea9b921a765df8c0a249d05e"
+}

@@ -1,19 +1,16 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sqlx::{SqliteExecutor, types::Json};
+use sqlx::SqliteExecutor;
+use sqlx::types::Json;
 use utoipa::{IntoParams, ToSchema};
 
-use super::{
-    Page, events, like_pattern,
-    pipelines::{self, StageKind},
-    required,
-};
-use crate::{
-    db::Db,
-    error::{Error, Result},
-    util::{self, Custom, double_option, non_empty},
-};
+use super::pipelines::{self, StageKind};
+use super::{Page, events};
+use crate::custom_fields::CustomFields;
+use crate::db::Db;
+use crate::error::{Error, Result};
+use crate::util;
 
 #[derive(Debug, Clone, Serialize, ToSchema, JsonSchema)]
 pub struct Deal {
@@ -34,8 +31,8 @@ pub struct Deal {
     /// Set when the deal enters a won or lost stage.
     pub closed_at: Option<DateTime<Utc>>,
     #[schema(value_type = Object)]
-    #[schemars(with = "Custom")]
-    pub custom: Json<Custom>,
+    #[schemars(with = "CustomFields")]
+    pub custom: Json<CustomFields>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -58,7 +55,7 @@ pub struct NewDeal {
     /// Arbitrary user-defined fields.
     #[serde(default)]
     #[schema(value_type = Object)]
-    pub custom: Custom,
+    pub custom: CustomFields,
 }
 
 /// Omitted fields are left unchanged; nullable fields set to null are cleared.
@@ -67,20 +64,20 @@ pub struct NewDeal {
 #[serde(deny_unknown_fields)]
 pub struct DealPatch {
     pub title: Option<String>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub amount: Option<Option<i64>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub currency: Option<Option<String>>,
     pub stage_id: Option<String>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub company_id: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub contact_id: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub expected_close_date: Option<Option<NaiveDate>>,
     /// Merged into existing custom fields; keys set to null are removed.
     #[schema(value_type = Option<Object>)]
-    pub custom: Option<Custom>,
+    pub custom: Option<CustomFields>,
 }
 
 #[derive(Debug, Default, Deserialize, IntoParams, JsonSchema)]
@@ -107,7 +104,7 @@ struct StageChanged<'a> {
 }
 
 fn normalize_currency(currency: Option<String>) -> Result<Option<String>> {
-    let currency = non_empty(currency).map(|c| c.to_uppercase());
+    let currency = util::non_empty(currency).map(|c| c.to_uppercase());
     if let Some(c) = &currency
         && !(c.len() == 3 && c.chars().all(|ch| ch.is_ascii_alphabetic()))
     {
@@ -129,7 +126,7 @@ fn closed_at_for(
     }
 }
 
-pub async fn get(ex: impl SqliteExecutor<'_>, id: &str) -> Result<Deal> {
+pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Deal> {
     sqlx::query_as!(
         Deal,
         r#"SELECT d.id, d.title, d.amount, d.currency,
@@ -137,21 +134,21 @@ pub async fn get(ex: impl SqliteExecutor<'_>, id: &str) -> Result<Deal> {
                   d.company_id, d.contact_id,
                   d.expected_close_date AS "expected_close_date: NaiveDate",
                   d.closed_at AS "closed_at: DateTime<Utc>",
-                  d.custom AS "custom: Json<Custom>",
+                  d.custom AS "custom: Json<CustomFields>",
                   d.created_at AS "created_at: DateTime<Utc>",
                   d.updated_at AS "updated_at: DateTime<Utc>"
            FROM deals d JOIN stages s ON s.id = d.stage_id
            WHERE d.id = ?"#,
         id,
     )
-    .fetch_optional(ex)
+    .fetch_optional(executor)
     .await?
     .ok_or(Error::NotFound("deal"))
 }
 
 pub async fn list(db: &Db, query: DealQuery) -> Result<Page<Deal>> {
     let limit = util::clamp_limit(query.limit);
-    let pattern = like_pattern(query.q);
+    let pattern = util::like_pattern(query.q);
     let fetch = limit + 1;
     let rows = sqlx::query_as!(
         Deal,
@@ -160,7 +157,7 @@ pub async fn list(db: &Db, query: DealQuery) -> Result<Page<Deal>> {
                   d.company_id, d.contact_id,
                   d.expected_close_date AS "expected_close_date: NaiveDate",
                   d.closed_at AS "closed_at: DateTime<Utc>",
-                  d.custom AS "custom: Json<Custom>",
+                  d.custom AS "custom: Json<CustomFields>",
                   d.created_at AS "created_at: DateTime<Utc>",
                   d.updated_at AS "updated_at: DateTime<Utc>"
            FROM deals d JOIN stages s ON s.id = d.stage_id
@@ -188,18 +185,21 @@ pub async fn list(db: &Db, query: DealQuery) -> Result<Page<Deal>> {
 }
 
 pub async fn create(db: &Db, input: NewDeal) -> Result<Deal> {
-    let title = required(input.title, "title")?;
+    let title = util::required(input.title, "title")?;
     let currency = normalize_currency(input.currency)?;
     let now = Utc::now();
     let id = util::new_id("deal");
-    let company_id = non_empty(input.company_id);
-    let contact_id = non_empty(input.contact_id);
+    let company_id = util::non_empty(input.company_id);
+    let contact_id = util::non_empty(input.contact_id);
     let custom = Json(input.custom);
 
     let mut tx = db.writer.begin().await?;
-    let stage = match non_empty(input.stage_id) {
+    let stage = match util::non_empty(input.stage_id) {
         Some(stage_id) => pipelines::get_stage(&mut *tx, &stage_id).await?,
-        None => pipelines::default_stage(&mut *tx, non_empty(input.pipeline_id).as_deref()).await?,
+        None => {
+            pipelines::default_stage(&mut *tx, util::non_empty(input.pipeline_id).as_deref())
+                .await?
+        }
     };
     let closed_at = closed_at_for(stage.kind, None, now);
     sqlx::query!(
@@ -235,7 +235,7 @@ pub async fn update(db: &Db, id: &str, patch: DealPatch) -> Result<Deal> {
     let from_stage_id = deal.stage_id.clone();
 
     if let Some(title) = patch.title {
-        deal.title = required(title, "title")?;
+        deal.title = util::required(title, "title")?;
     }
     util::patch(&mut deal.amount, patch.amount);
     if let Some(currency) = patch.currency {
@@ -250,10 +250,12 @@ pub async fn update(db: &Db, id: &str, patch: DealPatch) -> Result<Deal> {
         deal.stage_id = stage.id;
         deal.status = stage.kind;
     }
-    util::patch(&mut deal.company_id, patch.company_id.map(non_empty));
-    util::patch(&mut deal.contact_id, patch.contact_id.map(non_empty));
+    util::patch(&mut deal.company_id, patch.company_id.map(util::non_empty));
+    util::patch(&mut deal.contact_id, patch.contact_id.map(util::non_empty));
     util::patch(&mut deal.expected_close_date, patch.expected_close_date);
-    util::merge_custom(&mut deal.custom, patch.custom);
+    if let Some(update) = patch.custom {
+        deal.custom.merge(update);
+    }
     deal.updated_at = now;
 
     sqlx::query!(

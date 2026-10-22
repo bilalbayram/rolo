@@ -1,15 +1,15 @@
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sqlx::{SqliteExecutor, types::Json};
+use sqlx::SqliteExecutor;
+use sqlx::types::Json;
 use utoipa::{IntoParams, ToSchema};
 
-use super::{Page, events, like_pattern, required};
-use crate::{
-    db::Db,
-    error::{Error, Result},
-    util::{self, Custom, double_option},
-};
+use super::{Page, events};
+use crate::custom_fields::CustomFields;
+use crate::db::Db;
+use crate::error::{Error, Result};
+use crate::util;
 
 #[derive(Debug, Clone, Serialize, ToSchema, JsonSchema)]
 pub struct Company {
@@ -18,8 +18,8 @@ pub struct Company {
     /// Lowercased; unique across companies.
     pub domain: Option<String>,
     #[schema(value_type = Object)]
-    #[schemars(with = "Custom")]
-    pub custom: Json<Custom>,
+    #[schemars(with = "CustomFields")]
+    pub custom: Json<CustomFields>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -33,7 +33,7 @@ pub struct NewCompany {
     /// Arbitrary user-defined fields.
     #[serde(default)]
     #[schema(value_type = Object)]
-    pub custom: Custom,
+    pub custom: CustomFields,
 }
 
 #[derive(Debug, Default, Deserialize, ToSchema, JsonSchema)]
@@ -41,11 +41,11 @@ pub struct NewCompany {
 pub struct CompanyPatch {
     pub name: Option<String>,
     /// Set to null to clear.
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "util::double_option")]
     pub domain: Option<Option<String>>,
     /// Merged into existing custom fields; keys set to null are removed.
     #[schema(value_type = Option<Object>)]
-    pub custom: Option<Custom>,
+    pub custom: Option<CustomFields>,
 }
 
 #[derive(Debug, Default, Deserialize, IntoParams, JsonSchema)]
@@ -63,29 +63,29 @@ fn normalize_domain(domain: Option<String>) -> Option<String> {
     util::non_empty(domain).map(|d| d.to_lowercase())
 }
 
-pub async fn get(ex: impl SqliteExecutor<'_>, id: &str) -> Result<Company> {
+pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Company> {
     sqlx::query_as!(
         Company,
         r#"SELECT id, name, domain,
-                  custom AS "custom: Json<Custom>",
+                  custom AS "custom: Json<CustomFields>",
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
            FROM companies WHERE id = ?"#,
         id,
     )
-    .fetch_optional(ex)
+    .fetch_optional(executor)
     .await?
     .ok_or(Error::NotFound("company"))
 }
 
 pub async fn list(db: &Db, query: CompanyQuery) -> Result<Page<Company>> {
     let limit = util::clamp_limit(query.limit);
-    let pattern = like_pattern(query.q);
+    let pattern = util::like_pattern(query.q);
     let fetch = limit + 1;
     let rows = sqlx::query_as!(
         Company,
         r#"SELECT id, name, domain,
-                  custom AS "custom: Json<Custom>",
+                  custom AS "custom: Json<CustomFields>",
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
            FROM companies
@@ -106,7 +106,7 @@ pub async fn create(db: &Db, input: NewCompany) -> Result<Company> {
     let now = Utc::now();
     let company = Company {
         id: util::new_id("com"),
-        name: required(input.name, "name")?,
+        name: util::required(input.name, "name")?,
         domain: normalize_domain(input.domain),
         custom: Json(input.custom),
         created_at: now,
@@ -135,12 +135,14 @@ pub async fn update(db: &Db, id: &str, patch: CompanyPatch) -> Result<Company> {
     let mut tx = db.writer.begin().await?;
     let mut company = get(&mut *tx, id).await?;
     if let Some(name) = patch.name {
-        company.name = required(name, "name")?;
+        company.name = util::required(name, "name")?;
     }
     if let Some(domain) = patch.domain {
         company.domain = normalize_domain(domain);
     }
-    util::merge_custom(&mut company.custom, patch.custom);
+    if let Some(update) = patch.custom {
+        company.custom.merge(update);
+    }
     company.updated_at = Utc::now();
 
     sqlx::query!(

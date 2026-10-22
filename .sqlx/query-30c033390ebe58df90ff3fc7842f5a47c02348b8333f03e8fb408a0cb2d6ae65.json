@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT d.id, d.title, d.amount, d.currency,\n                  s.pipeline_id, d.stage_id, s.kind AS \"status: StageKind\",\n                  d.company_id, d.contact_id,\n                  d.expected_close_date AS \"expected_close_date: NaiveDate\",\n                  d.closed_at AS \"closed_at: DateTime<Utc>\",\n                  d.custom AS \"custom: Json<Custom>\",\n                  d.created_at AS \"created_at: DateTime<Utc>\",\n                  d.updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM deals d JOIN stages s ON s.id = d.stage_id\n           WHERE d.id = ?",
+  "query": "SELECT id, kind AS \"kind: ActivityKind\", subject, body, contact_id, company_id, deal_id,\n                  occurred_at AS \"occurred_at: DateTime<Utc>\",\n                  due_at AS \"due_at: DateTime<Utc>\",\n                  completed_at AS \"completed_at: DateTime<Utc>\",\n                  custom AS \"custom: Json<CustomFields>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM activities WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -9,150 +9,139 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "deals",
+            "table": "activities",
             "name": "id"
           }
         }
       },
       {
-        "name": "title",
+        "name": "kind: ActivityKind",
         "ordinal": 1,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "deals",
-            "name": "title"
-          }
-        }
-      },
-      {
-        "name": "amount",
-        "ordinal": 2,
-        "type_info": "Integer",
-        "origin": {
-          "Table": {
-            "table": "deals",
-            "name": "amount"
-          }
-        }
-      },
-      {
-        "name": "currency",
-        "ordinal": 3,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "deals",
-            "name": "currency"
-          }
-        }
-      },
-      {
-        "name": "pipeline_id",
-        "ordinal": 4,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "stages",
-            "name": "pipeline_id"
-          }
-        }
-      },
-      {
-        "name": "stage_id",
-        "ordinal": 5,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "deals",
-            "name": "stage_id"
-          }
-        }
-      },
-      {
-        "name": "status: StageKind",
-        "ordinal": 6,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "stages",
+            "table": "activities",
             "name": "kind"
           }
         }
       },
       {
-        "name": "company_id",
-        "ordinal": 7,
+        "name": "subject",
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "deals",
-            "name": "company_id"
+            "table": "activities",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "body",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "body"
           }
         }
       },
       {
         "name": "contact_id",
-        "ordinal": 8,
+        "ordinal": 4,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "deals",
+            "table": "activities",
             "name": "contact_id"
           }
         }
       },
       {
-        "name": "expected_close_date: NaiveDate",
+        "name": "company_id",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "company_id"
+          }
+        }
+      },
+      {
+        "name": "deal_id",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "deal_id"
+          }
+        }
+      },
+      {
+        "name": "occurred_at: DateTime<Utc>",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "name": "due_at: DateTime<Utc>",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "due_at"
+          }
+        }
+      },
+      {
+        "name": "completed_at: DateTime<Utc>",
         "ordinal": 9,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "deals",
-            "name": "expected_close_date"
+            "table": "activities",
+            "name": "completed_at"
           }
         }
       },
       {
-        "name": "closed_at: DateTime<Utc>",
+        "name": "custom: Json<CustomFields>",
         "ordinal": 10,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "deals",
-            "name": "closed_at"
-          }
-        }
-      },
-      {
-        "name": "custom: Json<Custom>",
-        "ordinal": 11,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "deals",
+            "table": "activities",
             "name": "custom"
           }
         }
       },
       {
         "name": "created_at: DateTime<Utc>",
-        "ordinal": 12,
+        "ordinal": 11,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "deals",
+            "table": "activities",
             "name": "created_at"
           }
         }
       },
       {
         "name": "updated_at: DateTime<Utc>",
-        "ordinal": 13,
+        "ordinal": 12,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "deals",
+            "table": "activities",
             "name": "updated_at"
           }
         }
@@ -166,11 +155,10 @@
       false,
       true,
       true,
-      false,
-      false,
-      false,
       true,
       true,
+      true,
+      false,
       true,
       true,
       false,
@@ -178,5 +166,5 @@
       false
     ]
   },
-  "hash": "5e7e67c6aeadafd6a2e2beb04ca5116371f069ff18641a320a8471f99522d61d"
+  "hash": "30c033390ebe58df90ff3fc7842f5a47c02348b8333f03e8fb408a0cb2d6ae65"
 }

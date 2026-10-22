@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (\n               SELECT 1 FROM webhooks\n               WHERE enabled = 1 AND cursor_seq < (SELECT coalesce(max(seq), 0) FROM events)\n           ) AS \"behind!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "behind!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3cebabfd246f6d8121fe6cab1a6212033cd41b9b9aa17d1a68d8eb2ce55c7cca"
+}

@@ -1,12 +1,12 @@
-use axum::{Json, extract::State};
-use utoipa_axum::{router::OpenApiRouter, routes};
+use axum::Json;
+use axum::extract::State;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
-use crate::{
-    AppState,
-    api::Params,
-    error::Result,
-    service::events::{self, EventPage, EventQuery},
-};
+use crate::AppState;
+use crate::api::extract::Params;
+use crate::error::Result;
+use crate::service::events::{self, EventPage, EventQuery};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new().routes(routes!(list))

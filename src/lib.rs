@@ -1,5 +1,10 @@
+//! rolo: a headless CRM for agents and apps. REST API, MCP server and webhook
+//! delivery over a single SQLite database.
+
 pub mod api;
+pub mod custom_fields;
 pub mod db;
+pub mod delivery;
 pub mod error;
 pub mod mcp;
 pub mod service;
@@ -7,10 +12,10 @@ pub mod util;
 
 use std::sync::Arc;
 
-use axum::{Json, Router, middleware, routing::get};
-use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
-};
+use axum::routing::get;
+use axum::{Json, Router, middleware};
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use tower_http::trace::TraceLayer;
 use utoipa_scalar::{Scalar, Servable};
 
@@ -21,20 +26,23 @@ pub struct AppState {
     pub db: Db,
 }
 
+#[derive(Debug, Clone, Default)]
 pub struct AppConfig {
     /// `Host` header values the MCP endpoint accepts (DNS-rebinding protection).
     /// Empty means loopback only.
     pub allowed_hosts: Vec<String>,
 }
 
+/// The HTTP application: REST at `/v1`, MCP at `/mcp`, docs at `/docs`.
+/// Webhook delivery runs separately; see [`delivery::spawn`].
 pub fn app(db: Db, config: AppConfig) -> Router {
     let state = AppState { db: db.clone() };
-    let auth = middleware::from_fn_with_state(state.clone(), api::authenticate);
+    let authenticate = middleware::from_fn_with_state(state.clone(), api::auth::authenticate);
 
     let (rest, openapi) = api::router().split_for_parts();
     let rest = rest
-        .layer(middleware::from_fn(api::require_write_for_mutations))
-        .layer(auth.clone());
+        .layer(middleware::from_fn(api::auth::require_write_for_mutations))
+        .layer(authenticate.clone());
 
     let mut mcp_config = StreamableHttpServerConfig::default()
         .with_legacy_session_mode(false)
@@ -47,7 +55,7 @@ pub fn app(db: Db, config: AppConfig) -> Router {
         Arc::new(LocalSessionManager::default()),
         mcp_config,
     );
-    let mcp = Router::new().nest_service("/mcp", mcp).layer(auth);
+    let mcp = Router::new().nest_service("/mcp", mcp).layer(authenticate);
 
     let spec = openapi.clone();
     Router::new()

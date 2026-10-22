@@ -1,10 +1,13 @@
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sqlx::{SqliteConnection, types::Json};
+use sqlx::SqliteConnection;
+use sqlx::types::Json;
 use utoipa::{IntoParams, ToSchema};
 
-use crate::{db::Db, error::Result, util};
+use crate::db::Db;
+use crate::error::Result;
+use crate::util;
 
 #[derive(Debug, Serialize, ToSchema, JsonSchema)]
 pub struct Event {

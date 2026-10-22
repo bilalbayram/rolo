@@ -1,0 +1,153 @@
+//! Shared harness for integration tests: an app on a temporary database,
+//! driven in-process with `tower::ServiceExt::oneshot`.
+
+// Each test binary uses a different subset of the harness.
+#![allow(dead_code)]
+
+use std::path::PathBuf;
+
+use axum::Router;
+use axum::body::Body;
+use axum::http::{Method, Request, StatusCode, header};
+use http_body_util::BodyExt;
+use rolo::AppConfig;
+use rolo::db::Db;
+use rolo::delivery::{self, WorkerConfig};
+use rolo::service::api_keys::{self, Scope};
+use serde_json::{Value, json};
+use tokio_util::sync::CancellationToken;
+use tower::ServiceExt;
+
+/// Which webhook destinations the worker may deliver to.
+pub enum Destinations {
+    PublicOnly,
+    AllowPrivate,
+}
+
+pub struct TestApp {
+    router: Router,
+    pub token: String,
+    pub read_token: String,
+    path: PathBuf,
+    shutdown: CancellationToken,
+}
+
+impl Drop for TestApp {
+    fn drop(&mut self) {
+        self.shutdown.cancel();
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", self.path.display()));
+        }
+    }
+}
+
+impl TestApp {
+    /// App without the webhook worker.
+    pub async fn new() -> Self {
+        Self::start(None).await
+    }
+
+    /// App with the webhook worker polling every 20ms.
+    pub async fn with_worker(destinations: Destinations) -> Self {
+        let config = WorkerConfig {
+            allow_private_destinations: matches!(destinations, Destinations::AllowPrivate),
+            poll_interval: std::time::Duration::from_millis(20),
+        };
+        Self::start(Some(config)).await
+    }
+
+    async fn start(worker: Option<WorkerConfig>) -> Self {
+        let path = std::env::temp_dir().join(format!("rolo-test-{}.db", ulid::Ulid::generate()));
+        let db = Db::open(&path).await.unwrap();
+        let shutdown = CancellationToken::new();
+        if let Some(config) = worker {
+            delivery::spawn(db.clone(), config, shutdown.clone()).unwrap();
+        }
+        let (_, token) = api_keys::create(&db, "test", Scope::Write).await.unwrap();
+        let (_, read_token) = api_keys::create(&db, "test-ro", Scope::Read).await.unwrap();
+        let router = rolo::app(
+            db,
+            AppConfig {
+                allowed_hosts: vec![],
+            },
+        );
+        Self {
+            router,
+            token,
+            read_token,
+            path,
+            shutdown,
+        }
+    }
+
+    pub async fn send(
+        &self,
+        method: Method,
+        uri: &str,
+        token: Option<&str>,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let mut req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(header::HOST, "localhost");
+        if let Some(token) = token {
+            req = req.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        let req = match body {
+            Some(body) => req
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string())),
+            None => req.body(Body::empty()),
+        }
+        .unwrap();
+        let res = self.router.clone().oneshot(req).await.unwrap();
+        let status = res.status();
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let value = if bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&bytes)
+                .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()))
+        };
+        (status, value)
+    }
+
+    pub async fn get(&self, uri: &str) -> (StatusCode, Value) {
+        self.send(Method::GET, uri, Some(&self.token), None).await
+    }
+
+    pub async fn post(&self, uri: &str, body: Value) -> (StatusCode, Value) {
+        self.send(Method::POST, uri, Some(&self.token), Some(body))
+            .await
+    }
+
+    pub async fn patch(&self, uri: &str, body: Value) -> (StatusCode, Value) {
+        self.send(Method::PATCH, uri, Some(&self.token), Some(body))
+            .await
+    }
+
+    pub async fn delete(&self, uri: &str) -> StatusCode {
+        self.send(Method::DELETE, uri, Some(&self.token), None)
+            .await
+            .0
+    }
+
+    pub async fn mcp(&self, token: &str, method: &str, params: Value) -> Value {
+        let req = Request::post("/mcp")
+            .header(header::HOST, "localhost")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::ACCEPT, "application/json, text/event-stream")
+            .header("mcp-protocol-version", "2025-06-18")
+            .body(Body::from(
+                json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).to_string(),
+            ))
+            .unwrap();
+        let res = self.router.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        value["result"].clone()
+    }
+}

@@ -1,0 +1,7 @@
+# Google Rust style guide settings. The last three are unstable rustfmt options:
+# run `cargo +nightly fmt` to apply them (stable `cargo fmt` warns and skips them).
+edition = "2024"
+max_width = 100
+imports_granularity = "Module"
+hex_literal_case = "Lower"
+format_macro_matchers = true

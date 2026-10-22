@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO webhooks (id, url, description, event_types, secret, enabled, cursor_seq, created_at, updated_at)\n         VALUES (?, ?, ?, ?, ?, 1, (SELECT coalesce(max(seq), 0) FROM events), ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "f794a79a6abbb47ee063039ab5fdd759118d1eb80c66d0c50f8a8ca8db04e45f"
+}

@@ -1,0 +1,134 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT d.id, d.attempts, w.url, w.secret,\n                  e.seq, e.id AS event_id, e.type AS event_type, e.entity_id,\n                  e.data AS \"data: Json<serde_json::Value>\",\n                  e.occurred_at AS \"occurred_at: DateTime<Utc>\"\n           FROM webhook_deliveries d\n           JOIN webhooks w ON w.id = d.webhook_id\n           JOIN events e ON e.seq = d.event_seq\n           WHERE d.status = 'pending' AND d.next_attempt_at <= ? AND w.enabled = 1\n           ORDER BY d.next_attempt_at, d.event_seq\n           LIMIT ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhook_deliveries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "attempts",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "webhook_deliveries",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "name": "url",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhooks",
+            "name": "url"
+          }
+        }
+      },
+      {
+        "name": "secret",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhooks",
+            "name": "secret"
+          }
+        }
+      },
+      {
+        "name": "seq",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "event_id",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "event_type",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "type"
+          }
+        }
+      },
+      {
+        "name": "entity_id",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "entity_id"
+          }
+        }
+      },
+      {
+        "name": "data: Json<serde_json::Value>",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "data"
+          }
+        }
+      },
+      {
+        "name": "occurred_at: DateTime<Utc>",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "occurred_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d9dede54a3c00a2de845cfc46170e58f616990d4104f08a0fd9d9dfa31f37ed3"
+}

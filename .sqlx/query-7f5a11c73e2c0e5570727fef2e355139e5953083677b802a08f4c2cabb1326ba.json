@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, name, domain,\n                  custom AS \"custom: Json<Custom>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM companies\n           WHERE (?1 IS NULL OR name LIKE ?1 ESCAPE '\\' OR domain LIKE ?1 ESCAPE '\\')\n             AND (?2 IS NULL OR id > ?2)\n           ORDER BY id\n           LIMIT ?3",
+  "query": "SELECT id, name, domain,\n                  custom AS \"custom: Json<CustomFields>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM companies WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -37,7 +37,7 @@
         }
       },
       {
-        "name": "custom: Json<Custom>",
+        "name": "custom: Json<CustomFields>",
         "ordinal": 3,
         "type_info": "Text",
         "origin": {
@@ -71,7 +71,7 @@
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 1
     },
     "nullable": [
       false,
@@ -82,5 +82,5 @@
       false
     ]
   },
-  "hash": "759dc7bf079e7ee28f1f41bd9a6382015f6d0968aea6ef8d27e975a8de2edd0f"
+  "hash": "7f5a11c73e2c0e5570727fef2e355139e5953083677b802a08f4c2cabb1326ba"
 }

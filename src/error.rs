@@ -1,9 +1,7 @@
-use axum::{
-    Json,
-    extract::rejection::{JsonRejection, PathRejection, QueryRejection},
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
+use axum::Json;
+use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use utoipa::ToSchema;
 

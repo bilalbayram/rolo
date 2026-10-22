@@ -3,32 +3,23 @@
 //! delete tools; deletion is available over REST.
 
 use axum::http::request::Parts;
-use rmcp::{
-    ServerHandler,
-    handler::server::{
-        router::tool::ToolRouter,
-        tool::Extension,
-        wrapper::{Json, Parameters},
-    },
-    model::{Implementation, ServerCapabilities, ServerConfig},
-    tool, tool_handler, tool_router,
-};
+use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::tool::Extension;
+use rmcp::handler::server::wrapper::{Json, Parameters};
+use rmcp::model::{Implementation, ServerCapabilities, ServerConfig};
+use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    db::Db,
-    error::Error,
-    service::{
-        Page,
-        activities::{self, Activity, ActivityPatch, ActivityQuery, NewActivity},
-        api_keys::Principal,
-        companies::{self, Company, CompanyPatch, CompanyQuery, NewCompany},
-        contacts::{self, Contact, ContactPatch, ContactQuery, NewContact},
-        deals::{self, Deal, DealPatch, DealQuery, NewDeal},
-        pipelines::{self, Pipeline},
-    },
-};
+use crate::db::Db;
+use crate::error::Error;
+use crate::service::Page;
+use crate::service::activities::{self, Activity, ActivityPatch, ActivityQuery, NewActivity};
+use crate::service::api_keys::Principal;
+use crate::service::companies::{self, Company, CompanyPatch, CompanyQuery, NewCompany};
+use crate::service::contacts::{self, Contact, ContactPatch, ContactQuery, NewContact};
+use crate::service::deals::{self, Deal, DealPatch, DealQuery, NewDeal};
+use crate::service::pipelines::{self, Pipeline};
 
 const INSTRUCTIONS: &str = "\
 rolo is a CRM. Records: companies, contacts (people, optionally at a company), \

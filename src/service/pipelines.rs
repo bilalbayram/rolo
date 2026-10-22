@@ -4,12 +4,10 @@ use serde::{Deserialize, Serialize};
 use sqlx::{SqliteConnection, SqliteExecutor};
 use utoipa::ToSchema;
 
-use super::{events, required};
-use crate::{
-    db::Db,
-    error::{Error, Result},
-    util,
-};
+use super::events;
+use crate::db::Db;
+use crate::error::{Error, Result};
+use crate::util;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, ToSchema, JsonSchema,
@@ -133,14 +131,14 @@ async fn fetch(conn: &mut SqliteConnection, id: &str) -> Result<Pipeline> {
     Ok(row.with_stages(&stages))
 }
 
-pub async fn get_stage(ex: impl SqliteExecutor<'_>, id: &str) -> Result<Stage> {
+pub async fn get_stage(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Stage> {
     sqlx::query_as!(
         Stage,
         r#"SELECT id, pipeline_id, name, position, kind AS "kind: StageKind"
            FROM stages WHERE id = ?"#,
         id,
     )
-    .fetch_optional(ex)
+    .fetch_optional(executor)
     .await?
     .ok_or_else(|| Error::Invalid(format!("unknown stage_id: {id}")))
 }
@@ -148,7 +146,7 @@ pub async fn get_stage(ex: impl SqliteExecutor<'_>, id: &str) -> Result<Stage> {
 /// The stage new deals land in: the first open stage of the given pipeline,
 /// or of the first pipeline when none is given.
 pub async fn default_stage(
-    ex: impl SqliteExecutor<'_>,
+    executor: impl SqliteExecutor<'_>,
     pipeline_id: Option<&str>,
 ) -> Result<Stage> {
     sqlx::query_as!(
@@ -160,7 +158,7 @@ pub async fn default_stage(
            LIMIT 1"#,
         pipeline_id,
     )
-    .fetch_optional(ex)
+    .fetch_optional(executor)
     .await?
     .ok_or_else(|| match pipeline_id {
         Some(id) => Error::Invalid(format!("pipeline {id} does not exist or has no open stage")),
@@ -169,7 +167,7 @@ pub async fn default_stage(
 }
 
 pub async fn create(db: &Db, input: NewPipeline) -> Result<Pipeline> {
-    let name = required(input.name, "name")?;
+    let name = util::required(input.name, "name")?;
     if !input.stages.iter().any(|s| s.kind == StageKind::Open) {
         return Err(Error::Invalid(
             "a pipeline needs at least one open stage".into(),
@@ -189,9 +187,10 @@ pub async fn create(db: &Db, input: NewPipeline) -> Result<Pipeline> {
     )
     .execute(&mut *tx)
     .await?;
-    for (position, stage) in input.stages.into_iter().enumerate() {
+    let stages = input.stages.into_iter().enumerate();
+    for (position, stage) in stages {
         let stage_id = util::new_id("stg");
-        let stage_name = required(stage.name, "stage name")?;
+        let stage_name = util::required(stage.name, "stage name")?;
         let position = position as i64;
         sqlx::query!(
             "INSERT INTO stages (id, pipeline_id, name, position, kind, created_at, updated_at)
