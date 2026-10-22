@@ -2,8 +2,9 @@
 
 use std::sync::Mutex;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer};
-use ulid::Generator;
+use ulid::{Generator, Ulid};
 
 use crate::error::{Error, Result};
 use crate::service::Page;
@@ -23,6 +24,30 @@ pub fn new_id(prefix: &str) -> String {
         Err(overflow) => overflow.commit_overflow_random(),
     };
     format!("{prefix}_{}", ulid.to_string().to_lowercase())
+}
+
+/// ID and creation time for a new record. `created_at` is set when importing
+/// a record created earlier elsewhere; it can't be in the future, and the ID
+/// then encodes that time, so the record sorts by ID where it would have.
+/// Otherwise the record is created now.
+pub fn new_record(
+    prefix: &str,
+    created_at: Option<DateTime<Utc>>,
+) -> Result<(String, DateTime<Utc>)> {
+    let now = Utc::now();
+    match created_at {
+        None => Ok((new_id(prefix), now)),
+        Some(created_at) if created_at > now => Err(Error::Invalid(
+            "created_at must not be in the future".into(),
+        )),
+        Some(created_at) => {
+            let ulid = Ulid::from_datetime(created_at.into());
+            Ok((
+                format!("{prefix}_{}", ulid.to_string().to_lowercase()),
+                created_at,
+            ))
+        }
+    }
 }
 
 /// Serde helper distinguishing "field absent" (`None`) from "field set to null"

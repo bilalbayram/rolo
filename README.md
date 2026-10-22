@@ -106,6 +106,7 @@ assignee):
 | User | `usr_` | owns records; `email` is unique; can be deactivated |
 
 - IDs are ULIDs, so they sort by creation time.
+- **Importing:** creating a contact, company, deal or activity, including through an upsert that creates, accepts an optional `created_at` (RFC 3339, not in the future), so imported records keep their original dates. `updated_at` gets the same value, and the ID is generated from that time, so the record sorts where it would have. A deal imported into a won or lost stage is closed at that time, and an activity's `occurred_at` defaults to it. Events still carry the real time of the import.
 - Every record has `custom`, a JSON object for extra fields. PATCH merges it, and setting a key to `null` removes that key. Keys can be given typed definitions (see below).
 - PATCH changes only the fields you send. Setting a nullable field to `null` clears it.
 - Lists use cursor pagination: `?limit=50&cursor=<next_cursor>`. Their `q` filter uses the search index (see below).

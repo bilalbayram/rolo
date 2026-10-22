@@ -65,6 +65,10 @@ pub struct NewDeal {
     #[serde(default)]
     #[schema(value_type = Object)]
     pub custom: CustomFields,
+    /// For imports: when the record was originally created, as an RFC 3339
+    /// timestamp that isn't in the future. `updated_at` gets the same value.
+    /// Defaults to now. A deal created in a won or lost stage is closed then too.
+    pub created_at: Option<DateTime<Utc>>,
 }
 
 /// Omitted fields are left unchanged; nullable fields set to null are cleared.
@@ -118,6 +122,10 @@ pub struct DealUpsert {
     #[serde(default)]
     #[schema(value_type = Object)]
     pub custom: CustomFields,
+    /// For imports: when the record was originally created, as an RFC 3339
+    /// timestamp that isn't in the future. `updated_at` gets the same value.
+    /// Defaults to now. Used only when creating.
+    pub created_at: Option<DateTime<Utc>>,
     /// How to find the existing deal: `custom.<key>` for unique custom fields,
     /// tried in order. The first key with a value in `custom` that matches a
     /// deal wins.
@@ -426,8 +434,8 @@ pub async fn create(db: &Db, caller: &Principal, input: NewDeal) -> Result<Deal>
 async fn insert(tx: &mut SqliteConnection, caller: &Principal, input: NewDeal) -> Result<Deal> {
     let title = util::required(input.title, "title")?;
     let currency = normalize_currency(input.currency)?;
-    let now = Utc::now();
-    let id = util::new_id("deal");
+    // An imported deal is created, and if its stage is won or lost closed, then.
+    let (id, now) = util::new_record("deal", input.created_at)?;
     let company_id = util::non_empty(input.company_id);
     let contact_id = util::non_empty(input.contact_id);
     let owner_id = users::owner_for_new(input.owner_id, caller)?;
@@ -591,6 +599,7 @@ pub async fn upsert(db: &Db, caller: &Principal, input: DealUpsert) -> Result<Up
                 expected_close_date: input.expected_close_date,
                 owner_id: input.owner_id,
                 custom: input.custom,
+                created_at: input.created_at,
             };
             UpsertedDeal {
                 deal: insert(&mut tx, caller, new).await?,

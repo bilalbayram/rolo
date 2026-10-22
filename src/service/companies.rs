@@ -43,6 +43,10 @@ pub struct NewCompany {
     #[serde(default)]
     #[schema(value_type = Object)]
     pub custom: CustomFields,
+    /// For imports: when the record was originally created, as an RFC 3339
+    /// timestamp that isn't in the future. `updated_at` gets the same value.
+    /// Defaults to now.
+    pub created_at: Option<DateTime<Utc>>,
 }
 
 /// Omitted fields are left unchanged; nullable fields set to null are cleared.
@@ -152,15 +156,15 @@ pub async fn list(db: &Db, caller: &Principal, query: CompanyQuery) -> Result<Pa
 }
 
 pub async fn create(db: &Db, caller: &Principal, input: NewCompany) -> Result<Company> {
-    let now = Utc::now();
+    let (id, created_at) = util::new_record("com", input.created_at)?;
     let mut company = Company {
-        id: util::new_id("com"),
+        id,
         name: util::required(input.name, "name")?,
         domain: normalize_domain(input.domain),
         owner_id: users::owner_for_new(input.owner_id, caller)?,
         custom: Json(input.custom),
-        created_at: now,
-        updated_at: now,
+        created_at,
+        updated_at: created_at,
     };
 
     let mut tx = db.writer.begin().await?;

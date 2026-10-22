@@ -60,6 +60,10 @@ pub struct NewContact {
     #[serde(default)]
     #[schema(value_type = Object)]
     pub custom: CustomFields,
+    /// For imports: when the record was originally created, as an RFC 3339
+    /// timestamp that isn't in the future. `updated_at` gets the same value.
+    /// Defaults to now.
+    pub created_at: Option<DateTime<Utc>>,
 }
 
 /// Omitted fields are left unchanged; nullable fields set to null are cleared.
@@ -106,6 +110,10 @@ pub struct ContactUpsert {
     #[serde(default)]
     #[schema(value_type = Object)]
     pub custom: CustomFields,
+    /// For imports: when the record was originally created, as an RFC 3339
+    /// timestamp that isn't in the future. `updated_at` gets the same value.
+    /// Defaults to now. Used only when creating.
+    pub created_at: Option<DateTime<Utc>>,
     /// How to find the existing contact: `email`, `phone`, or `custom.<key>` for
     /// a unique custom field. The first key with a value in this body that
     /// matches a contact wins. Default `["email", "phone"]`.
@@ -311,9 +319,9 @@ async fn insert(
     region: Region,
     input: NewContact,
 ) -> Result<Contact> {
-    let now = Utc::now();
+    let (id, created_at) = util::new_record("con", input.created_at)?;
     let mut contact = Contact {
-        id: util::new_id("con"),
+        id,
         first_name: util::non_empty(input.first_name),
         last_name: util::non_empty(input.last_name),
         email: normalize_email(input.email)?,
@@ -322,8 +330,8 @@ async fn insert(
         company_id: util::non_empty(input.company_id),
         owner_id: users::owner_for_new(input.owner_id, caller)?,
         custom: Json(input.custom),
-        created_at: now,
-        updated_at: now,
+        created_at,
+        updated_at: created_at,
     };
     validate(&contact)?;
 
@@ -472,6 +480,7 @@ pub async fn upsert(
                 company_id: input.company_id,
                 owner_id: input.owner_id,
                 custom: input.custom,
+                created_at: input.created_at,
             };
             UpsertedContact {
                 contact: insert(&mut tx, caller, region, new).await?,

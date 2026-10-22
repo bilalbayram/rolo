@@ -75,6 +75,10 @@ pub struct NewActivity {
     #[serde(default)]
     #[schema(value_type = Object)]
     pub custom: CustomFields,
+    /// For imports: when the record was originally created, as an RFC 3339
+    /// timestamp that isn't in the future. `updated_at` gets the same value.
+    /// Defaults to now. `occurred_at` defaults to it.
+    pub created_at: Option<DateTime<Utc>>,
 }
 
 /// Omitted fields are left unchanged; nullable fields set to null are cleared.
@@ -208,22 +212,22 @@ pub async fn list(db: &Db, caller: &Principal, query: ActivityQuery) -> Result<P
 }
 
 pub async fn create(db: &Db, caller: &Principal, input: NewActivity) -> Result<Activity> {
-    let now = Utc::now();
+    let (id, created_at) = util::new_record("act", input.created_at)?;
     let mut activity = Activity {
-        id: util::new_id("act"),
+        id,
         kind: input.kind,
         subject: util::non_empty(input.subject),
         body: util::non_empty(input.body),
         contact_id: util::non_empty(input.contact_id),
         company_id: util::non_empty(input.company_id),
         deal_id: util::non_empty(input.deal_id),
-        occurred_at: input.occurred_at.unwrap_or(now),
+        occurred_at: input.occurred_at.unwrap_or(created_at),
         due_at: input.due_at,
         completed_at: input.completed_at,
         owner_id: users::owner_for_new(input.owner_id, caller)?,
         custom: Json(input.custom),
-        created_at: now,
-        updated_at: now,
+        created_at,
+        updated_at: created_at,
     };
     validate(&activity)?;
 
