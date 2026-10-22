@@ -10,13 +10,15 @@ use crate::api::extract::{Body, Id, Params};
 use crate::error::{Error, ErrorBody, Result};
 use crate::service::Page;
 use crate::service::webhooks::{
-    self, CreatedWebhook, Delivery, DeliveryQuery, NewWebhook, Webhook, WebhookPatch,
+    self, Delivery, DeliveryQuery, NewWebhook, RotateSecretQuery, Webhook, WebhookPatch,
+    WebhookWithSecret,
 };
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list, create))
         .routes(routes!(get, update, delete))
+        .routes(routes!(rotate_secret))
         .routes(routes!(list_deliveries))
         .routes(routes!(retry_delivery))
 }
@@ -42,11 +44,11 @@ async fn list(State(state): State<AppState>) -> Result<Json<Vec<Webhook>>> {
 /// Webhooks: verify `webhook-signature` against `webhook-id`,
 /// `webhook-timestamp` and the raw body.
 #[utoipa::path(post, path = "/webhooks", tag = "webhooks", request_body = NewWebhook,
-    responses((status = 201, body = CreatedWebhook), (status = 422, body = ErrorBody)))]
+    responses((status = 201, body = WebhookWithSecret), (status = 422, body = ErrorBody)))]
 async fn create(
     State(state): State<AppState>,
     Body(input): Body<NewWebhook>,
-) -> Result<(StatusCode, Json<CreatedWebhook>)> {
+) -> Result<(StatusCode, Json<WebhookWithSecret>)> {
     Ok((
         StatusCode::CREATED,
         Json(webhooks::create(&state.db, input).await?),
@@ -63,7 +65,8 @@ async fn get(State(state): State<AppState>, Id(id): Id) -> Result<Json<Webhook>>
 /// Update a webhook
 ///
 /// Set `enabled` to false to pause deliveries; re-enabling delivers the events
-/// that happened in the meantime.
+/// that happened in the meantime. Webhooks that keep failing are disabled
+/// automatically (see `disabled_reason`); re-enable them the same way.
 #[utoipa::path(patch, path = "/webhooks/{id}", tag = "webhooks", params(("id" = String, Path)),
     request_body = WebhookPatch,
     responses((status = 200, body = Webhook), (status = 404, body = ErrorBody), (status = 422, body = ErrorBody)))]
@@ -81,6 +84,22 @@ async fn update(
 async fn delete(State(state): State<AppState>, Id(id): Id) -> Result<StatusCode> {
     webhooks::delete(&state.db, &id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Rotate the signing secret
+///
+/// Returns the new secret, which is not shown again. For `grace_period_hours`
+/// (default 24) requests are signed with both the new and the previous secret,
+/// so receivers can switch without rejecting deliveries.
+#[utoipa::path(post, path = "/webhooks/{id}/rotate-secret", tag = "webhooks",
+    params(("id" = String, Path), RotateSecretQuery),
+    responses((status = 200, body = WebhookWithSecret), (status = 404, body = ErrorBody), (status = 422, body = ErrorBody)))]
+async fn rotate_secret(
+    State(state): State<AppState>,
+    Id(id): Id,
+    Params(query): Params<RotateSecretQuery>,
+) -> Result<Json<WebhookWithSecret>> {
+    Ok(Json(webhooks::rotate_secret(&state.db, &id, query).await?))
 }
 
 /// List deliveries

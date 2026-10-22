@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT d.id, d.attempts, w.url, w.secret,\n                  e.seq, e.id AS event_id, e.type AS event_type, e.entity_id,\n                  e.data AS \"data: Json<serde_json::Value>\",\n                  e.occurred_at AS \"occurred_at: DateTime<Utc>\"\n           FROM webhook_deliveries d\n           JOIN webhooks w ON w.id = d.webhook_id\n           JOIN events e ON e.seq = d.event_seq\n           WHERE d.status = 'pending' AND d.next_attempt_at <= ? AND w.enabled = 1\n           ORDER BY d.next_attempt_at, d.event_seq\n           LIMIT ?",
+  "query": "SELECT d.id, d.webhook_id, d.attempts, w.url, w.secret,\n                  CASE WHEN w.previous_secret_expires_at > ?1 THEN w.previous_secret END\n                      AS \"previous_secret?: String\",\n                  e.seq, e.id AS event_id, e.type AS event_type, e.entity_id,\n                  e.data AS \"data: Json<serde_json::Value>\",\n                  e.occurred_at AS \"occurred_at: DateTime<Utc>\"\n           FROM webhook_deliveries d\n           JOIN webhooks w ON w.id = d.webhook_id\n           JOIN events e ON e.seq = d.event_seq\n           WHERE d.status = 'pending' AND d.next_attempt_at <= ?1 AND w.enabled = 1\n           ORDER BY d.next_attempt_at, d.event_seq\n           LIMIT ?2",
   "describe": {
     "columns": [
       {
@@ -15,8 +15,19 @@
         }
       },
       {
-        "name": "attempts",
+        "name": "webhook_id",
         "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhook_deliveries",
+            "name": "webhook_id"
+          }
+        }
+      },
+      {
+        "name": "attempts",
+        "ordinal": 2,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -27,7 +38,7 @@
       },
       {
         "name": "url",
-        "ordinal": 2,
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -38,7 +49,7 @@
       },
       {
         "name": "secret",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -48,8 +59,14 @@
         }
       },
       {
+        "name": "previous_secret?: String",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
         "name": "seq",
-        "ordinal": 4,
+        "ordinal": 6,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -60,7 +77,7 @@
       },
       {
         "name": "event_id",
-        "ordinal": 5,
+        "ordinal": 7,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -71,7 +88,7 @@
       },
       {
         "name": "event_type",
-        "ordinal": 6,
+        "ordinal": 8,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -82,7 +99,7 @@
       },
       {
         "name": "entity_id",
-        "ordinal": 7,
+        "ordinal": 9,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -93,7 +110,7 @@
       },
       {
         "name": "data: Json<serde_json::Value>",
-        "ordinal": 8,
+        "ordinal": 10,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -104,7 +121,7 @@
       },
       {
         "name": "occurred_at: DateTime<Utc>",
-        "ordinal": 9,
+        "ordinal": 11,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -123,6 +140,8 @@
       false,
       false,
       false,
+      true,
+      false,
       false,
       false,
       false,
@@ -130,5 +149,5 @@
       false
     ]
   },
-  "hash": "d9dede54a3c00a2de845cfc46170e58f616990d4104f08a0fd9d9dfa31f37ed3"
+  "hash": "c68be3e9e4c67a44e869582330af6fba6ef15f79a812a3e8ff0eb8a3b5376057"
 }

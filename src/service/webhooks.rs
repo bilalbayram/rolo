@@ -20,17 +20,33 @@ pub struct Webhook {
     pub event_types: Json<Vec<String>>,
     /// Disabled webhooks keep their place in the feed; re-enabling delivers what was missed.
     pub enabled: bool,
+    /// Why the webhook was disabled automatically, if it was. Cleared when re-enabled.
+    pub disabled_reason: Option<String>,
+    /// Start of the current run of failed attempts; null once a delivery succeeds.
+    pub failing_since: Option<DateTime<Utc>>,
+    /// Deliveries in a row that failed every attempt.
+    pub consecutive_failed_deliveries: i64,
+    /// Until then, requests are also signed with the secret from before the last rotation.
+    pub previous_secret_expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-/// Returned once, on creation.
+/// Returned only when the signing secret is created or rotated.
 #[derive(Debug, Serialize, ToSchema)]
-pub struct CreatedWebhook {
+pub struct WebhookWithSecret {
     #[serde(flatten)]
     pub webhook: Webhook,
-    /// `whsec_...` signing secret (Standard Webhooks). Shown only once.
+    /// `whsec_...` signing secret (Standard Webhooks). Not shown again.
     pub secret: String,
+}
+
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct RotateSecretQuery {
+    /// Hours the previous secret keeps signing requests alongside the new one,
+    /// 0-168 (default 24). 0 stops using it immediately.
+    pub grace_period_hours: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -130,6 +146,10 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Webhook>
         r#"SELECT id, url, description,
                   event_types AS "event_types: Json<Vec<String>>",
                   enabled AS "enabled: bool",
+                  disabled_reason,
+                  failing_since AS "failing_since: DateTime<Utc>",
+                  consecutive_failed_deliveries,
+                  previous_secret_expires_at AS "previous_secret_expires_at: DateTime<Utc>",
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
            FROM webhooks WHERE id = ?"#,
@@ -146,6 +166,10 @@ pub async fn list(db: &Db) -> Result<Vec<Webhook>> {
         r#"SELECT id, url, description,
                   event_types AS "event_types: Json<Vec<String>>",
                   enabled AS "enabled: bool",
+                  disabled_reason,
+                  failing_since AS "failing_since: DateTime<Utc>",
+                  consecutive_failed_deliveries,
+                  previous_secret_expires_at AS "previous_secret_expires_at: DateTime<Utc>",
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
            FROM webhooks ORDER BY id"#,
@@ -155,7 +179,7 @@ pub async fn list(db: &Db) -> Result<Vec<Webhook>> {
 }
 
 /// New webhooks receive events that happen after creation, not history.
-pub async fn create(db: &Db, input: NewWebhook) -> Result<CreatedWebhook> {
+pub async fn create(db: &Db, input: NewWebhook) -> Result<WebhookWithSecret> {
     let now = Utc::now();
     let webhook = Webhook {
         id: util::new_id("whk"),
@@ -163,6 +187,10 @@ pub async fn create(db: &Db, input: NewWebhook) -> Result<CreatedWebhook> {
         description: util::non_empty(input.description),
         event_types: Json(normalize_event_types(input.event_types)),
         enabled: true,
+        disabled_reason: None,
+        failing_since: None,
+        consecutive_failed_deliveries: 0,
+        previous_secret_expires_at: None,
         created_at: now,
         updated_at: now,
     };
@@ -180,7 +208,7 @@ pub async fn create(db: &Db, input: NewWebhook) -> Result<CreatedWebhook> {
     )
     .execute(&db.writer)
     .await?;
-    Ok(CreatedWebhook { webhook, secret })
+    Ok(WebhookWithSecret { webhook, secret })
 }
 
 pub async fn update(db: &Db, id: &str, patch: WebhookPatch) -> Result<Webhook> {
@@ -197,15 +225,27 @@ pub async fn update(db: &Db, id: &str, patch: WebhookPatch) -> Result<Webhook> {
         webhook.event_types = Json(normalize_event_types(types));
     }
     if let Some(enabled) = patch.enabled {
+        if enabled && !webhook.enabled {
+            // A fresh start: the endpoint is presumed fixed.
+            webhook.disabled_reason = None;
+            webhook.failing_since = None;
+            webhook.consecutive_failed_deliveries = 0;
+        }
         webhook.enabled = enabled;
     }
     webhook.updated_at = Utc::now();
     sqlx::query!(
-        "UPDATE webhooks SET url = ?, description = ?, event_types = ?, enabled = ?, updated_at = ? WHERE id = ?",
+        "UPDATE webhooks
+         SET url = ?, description = ?, event_types = ?, enabled = ?, disabled_reason = ?,
+             failing_since = ?, consecutive_failed_deliveries = ?, updated_at = ?
+         WHERE id = ?",
         webhook.url,
         webhook.description,
         webhook.event_types,
         webhook.enabled,
+        webhook.disabled_reason,
+        webhook.failing_since,
+        webhook.consecutive_failed_deliveries,
         webhook.updated_at,
         id,
     )
@@ -213,6 +253,44 @@ pub async fn update(db: &Db, id: &str, patch: WebhookPatch) -> Result<Webhook> {
     .await?;
     tx.commit().await?;
     Ok(webhook)
+}
+
+/// Replace the signing secret. During the grace period requests carry
+/// signatures from both secrets, so receivers can switch without downtime.
+/// Rotating again within the grace period drops the oldest secret.
+pub async fn rotate_secret(
+    db: &Db,
+    id: &str,
+    query: RotateSecretQuery,
+) -> Result<WebhookWithSecret> {
+    let hours = query.grace_period_hours.unwrap_or(24);
+    if !(0..=168).contains(&hours) {
+        return Err(Error::Invalid(
+            "grace_period_hours must be between 0 and 168".into(),
+        ));
+    }
+    let now = Utc::now();
+    let previous_secret_expires_at = (hours > 0).then(|| now + chrono::Duration::hours(hours));
+    let secret = new_secret();
+    let mut tx = db.writer.begin().await?;
+    let result = sqlx::query!(
+        "UPDATE webhooks
+         SET previous_secret = CASE WHEN ?1 IS NULL THEN NULL ELSE secret END,
+             previous_secret_expires_at = ?1, secret = ?2, updated_at = ?3
+         WHERE id = ?4",
+        previous_secret_expires_at,
+        secret,
+        now,
+        id,
+    )
+    .execute(&mut *tx)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(Error::NotFound("webhook"));
+    }
+    let webhook = get(&mut *tx, id).await?;
+    tx.commit().await?;
+    Ok(WebhookWithSecret { webhook, secret })
 }
 
 pub async fn delete(db: &Db, id: &str) -> Result<()> {

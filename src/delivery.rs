@@ -15,6 +15,7 @@ use hmac::Hmac;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::header::CONTENT_TYPE;
 use sha2::Sha256;
+use sqlx::SqliteConnection;
 use sqlx::types::Json;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -25,31 +26,61 @@ use crate::service::events::Event;
 use crate::service::webhooks::DeliveryStatus;
 use crate::util;
 
-/// Attempts per delivery before it is marked failed.
-const MAX_ATTEMPTS: i64 = 8;
-
-/// Wait after failed attempt N (1-based) before the next one; about 21 hours in total.
-const BACKOFF: [Duration; 7] = [
-    Duration::from_secs(10),
-    Duration::from_secs(60),
-    Duration::from_secs(5 * 60),
-    Duration::from_secs(30 * 60),
-    Duration::from_secs(2 * 60 * 60),
-    Duration::from_secs(6 * 60 * 60),
-    Duration::from_secs(12 * 60 * 60),
-];
-
 /// Deliveries attempted concurrently per tick.
 const DELIVERY_BATCH: i64 = 32;
 
 /// Events scanned per webhook per tick when fanning out.
 const FAN_OUT_BATCH: i64 = 1000;
 
+/// When to give up on a delivery, and on an endpoint.
+#[derive(Debug, Clone)]
+pub struct RetryPolicy {
+    /// Wait after failed attempt N (1-based) before attempt N + 1. A delivery
+    /// gets `backoff.len() + 1` attempts before it is marked failed.
+    pub backoff: Vec<Duration>,
+    /// Disable a webhook once this many deliveries in a row have failed every
+    /// attempt...
+    pub disable_after_failed_deliveries: i64,
+    /// ...and it has not had a successful delivery for this long.
+    pub disable_after_failing_for: Duration,
+}
+
+impl Default for RetryPolicy {
+    /// 8 attempts over about 21 hours; disable after 5 failed deliveries and
+    /// 3 days without success.
+    fn default() -> Self {
+        Self {
+            backoff: vec![
+                Duration::from_secs(10),
+                Duration::from_secs(60),
+                Duration::from_secs(5 * 60),
+                Duration::from_secs(30 * 60),
+                Duration::from_secs(2 * 60 * 60),
+                Duration::from_secs(6 * 60 * 60),
+                Duration::from_secs(12 * 60 * 60),
+            ],
+            disable_after_failed_deliveries: 5,
+            disable_after_failing_for: Duration::from_secs(3 * 24 * 60 * 60),
+        }
+    }
+}
+
+impl RetryPolicy {
+    /// When to try again after `attempts` failed attempts; `None` to give up.
+    fn next_attempt_at(&self, attempts: i64, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        let index = usize::try_from(attempts - 1).ok()?;
+        let delay = self.backoff.get(index)?;
+        Some(now + chrono::Duration::from_std(*delay).expect("backoff delays fit in chrono"))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct WorkerConfig {
     /// Allow destinations on loopback, private and other non-public networks.
     /// Off by default so a webhook cannot be used to reach internal services.
     pub allow_private_destinations: bool,
     pub poll_interval: Duration,
+    pub retry: RetryPolicy,
 }
 
 impl Default for WorkerConfig {
@@ -57,6 +88,7 @@ impl Default for WorkerConfig {
         Self {
             allow_private_destinations: false,
             poll_interval: Duration::from_secs(1),
+            retry: RetryPolicy::default(),
         }
     }
 }
@@ -69,25 +101,20 @@ pub fn spawn(
     shutdown: CancellationToken,
 ) -> anyhow::Result<JoinHandle<()>> {
     let sender = Sender::new(config.allow_private_destinations)?;
-    Ok(tokio::spawn(run(
-        db,
-        sender,
-        config.poll_interval,
-        shutdown,
-    )))
+    Ok(tokio::spawn(run(db, sender, config, shutdown)))
 }
 
-async fn run(db: Db, sender: Sender, poll_interval: Duration, shutdown: CancellationToken) {
+async fn run(db: Db, sender: Sender, config: WorkerConfig, shutdown: CancellationToken) {
     loop {
         if let Err(err) = fan_out(&db).await {
             tracing::error!(error = ?err, "webhook fan-out failed");
         }
-        if let Err(err) = deliver_due(&db, &sender).await {
+        if let Err(err) = deliver_due(&db, &sender, &config.retry).await {
             tracing::error!(error = ?err, "webhook delivery failed");
         }
         tokio::select! {
             () = shutdown.cancelled() => break,
-            () = tokio::time::sleep(poll_interval) => {}
+            () = tokio::time::sleep(config.poll_interval) => {}
         }
     }
 }
@@ -166,14 +193,17 @@ fn is_subscribed(prefixes: &[String], event_type: &str) -> bool {
 
 struct DueDelivery {
     id: String,
+    webhook_id: String,
     attempts: i64,
     url: String,
-    secret: String,
+    /// The current secret, then the previous one while it is in its grace period.
+    secrets: Vec<String>,
     event: Event,
 }
 
 struct AttemptResult {
     delivery_id: String,
+    webhook_id: String,
     previous_attempts: i64,
     outcome: Outcome,
 }
@@ -183,19 +213,21 @@ enum Outcome {
     Failed { status: Option<u16>, error: String },
 }
 
-async fn deliver_due(db: &Db, sender: &Sender) -> Result<()> {
+async fn deliver_due(db: &Db, sender: &Sender, policy: &RetryPolicy) -> Result<()> {
     let now = Utc::now();
     let rows = sqlx::query!(
-        r#"SELECT d.id, d.attempts, w.url, w.secret,
+        r#"SELECT d.id, d.webhook_id, d.attempts, w.url, w.secret,
+                  CASE WHEN w.previous_secret_expires_at > ?1 THEN w.previous_secret END
+                      AS "previous_secret?: String",
                   e.seq, e.id AS event_id, e.type AS event_type, e.entity_id,
                   e.data AS "data: Json<serde_json::Value>",
                   e.occurred_at AS "occurred_at: DateTime<Utc>"
            FROM webhook_deliveries d
            JOIN webhooks w ON w.id = d.webhook_id
            JOIN events e ON e.seq = d.event_seq
-           WHERE d.status = 'pending' AND d.next_attempt_at <= ? AND w.enabled = 1
+           WHERE d.status = 'pending' AND d.next_attempt_at <= ?1 AND w.enabled = 1
            ORDER BY d.next_attempt_at, d.event_seq
-           LIMIT ?"#,
+           LIMIT ?2"#,
         now,
         DELIVERY_BATCH,
     )
@@ -207,11 +239,14 @@ async fn deliver_due(db: &Db, sender: &Sender) -> Result<()> {
 
     let mut attempts = JoinSet::new();
     for row in rows {
+        let mut secrets = vec![row.secret];
+        secrets.extend(row.previous_secret);
         let due = DueDelivery {
             id: row.id,
+            webhook_id: row.webhook_id,
             attempts: row.attempts,
             url: row.url,
-            secret: row.secret,
+            secrets,
             event: Event {
                 seq: row.seq,
                 id: row.event_id,
@@ -223,19 +258,20 @@ async fn deliver_due(db: &Db, sender: &Sender) -> Result<()> {
         };
         let sender = sender.clone();
         attempts.spawn(async move {
-            let outcome = sender.send(&due.url, &due.secret, &due.event).await;
+            let outcome = sender.send(&due.url, &due.secrets, &due.event).await;
             AttemptResult {
                 delivery_id: due.id,
+                webhook_id: due.webhook_id,
                 previous_attempts: due.attempts,
                 outcome,
             }
         });
     }
     let results = attempts.join_all().await;
-    record_results(db, results).await
+    record_results(db, results, policy).await
 }
 
-async fn record_results(db: &Db, results: Vec<AttemptResult>) -> Result<()> {
+async fn record_results(db: &Db, results: Vec<AttemptResult>, policy: &RetryPolicy) -> Result<()> {
     let now = Utc::now();
     let mut tx = db.writer.begin().await?;
     for result in results {
@@ -256,9 +292,16 @@ async fn record_results(db: &Db, results: Vec<AttemptResult>) -> Result<()> {
                 )
                 .execute(&mut *tx)
                 .await?;
+                sqlx::query!(
+                    "UPDATE webhooks SET failing_since = NULL, consecutive_failed_deliveries = 0
+                     WHERE id = ? AND (failing_since IS NOT NULL OR consecutive_failed_deliveries > 0)",
+                    result.webhook_id,
+                )
+                .execute(&mut *tx)
+                .await?;
             }
             Outcome::Failed { status, error } => {
-                let next_attempt_at = next_attempt_at(attempts, now);
+                let next_attempt_at = policy.next_attempt_at(attempts, now);
                 let delivery_status = match next_attempt_at {
                     Some(_) => DeliveryStatus::Pending,
                     None => DeliveryStatus::Failed,
@@ -280,6 +323,8 @@ async fn record_results(db: &Db, results: Vec<AttemptResult>) -> Result<()> {
                 )
                 .execute(&mut *tx)
                 .await?;
+                let gave_up = next_attempt_at.is_none();
+                record_endpoint_failure(&mut tx, &result.webhook_id, gave_up, policy, now).await?;
             }
         }
     }
@@ -287,16 +332,53 @@ async fn record_results(db: &Db, results: Vec<AttemptResult>) -> Result<()> {
     Ok(())
 }
 
-/// `None` once `attempts` reaches the limit.
-fn next_attempt_at(attempts: i64, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
-    if attempts >= MAX_ATTEMPTS {
-        return None;
+/// Track a failed attempt against the endpoint, and disable the webhook if
+/// `gave_up` on a delivery pushed it past the policy's thresholds.
+async fn record_endpoint_failure(
+    conn: &mut SqliteConnection,
+    webhook_id: &str,
+    gave_up: bool,
+    policy: &RetryPolicy,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    let failed_deliveries = i64::from(gave_up);
+    sqlx::query!(
+        "UPDATE webhooks
+         SET failing_since = coalesce(failing_since, ?),
+             consecutive_failed_deliveries = consecutive_failed_deliveries + ?
+         WHERE id = ?",
+        now,
+        failed_deliveries,
+        webhook_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    if !gave_up {
+        return Ok(());
     }
-    let index = usize::try_from(attempts - 1)
-        .unwrap_or(0)
-        .min(BACKOFF.len() - 1);
-    let delay = chrono::Duration::from_std(BACKOFF[index]).expect("backoff delays fit in chrono");
-    Some(now + delay)
+
+    let failing_for = chrono::Duration::from_std(policy.disable_after_failing_for)
+        .expect("disable threshold fits in chrono");
+    let cutoff = now - failing_for;
+    let disabled = sqlx::query!(
+        "UPDATE webhooks
+         SET enabled = 0, updated_at = ?1,
+             disabled_reason = 'disabled automatically: ' || consecutive_failed_deliveries
+                 || ' deliveries in a row failed every attempt, with no successful delivery since '
+                 || failing_since
+         WHERE id = ?2 AND enabled = 1
+           AND consecutive_failed_deliveries >= ?3 AND failing_since <= ?4",
+        now,
+        webhook_id,
+        policy.disable_after_failed_deliveries,
+        cutoff,
+    )
+    .execute(&mut *conn)
+    .await?;
+    if disabled.rows_affected() > 0 {
+        tracing::warn!(webhook = %webhook_id, "webhook disabled after repeated delivery failures");
+    }
+    Ok(())
 }
 
 /// Standard Webhooks signature header value: `v1,<base64 HMAC-SHA256>` over
@@ -343,8 +425,8 @@ impl Sender {
         })
     }
 
-    async fn send(&self, url: &str, secret: &str, event: &Event) -> Outcome {
-        match self.try_send(url, secret, event).await {
+    async fn send(&self, url: &str, secrets: &[String], event: &Event) -> Outcome {
+        match self.try_send(url, secrets, event).await {
             Ok(outcome) => outcome,
             Err(err) => Outcome::Failed {
                 status: None,
@@ -353,7 +435,12 @@ impl Sender {
         }
     }
 
-    async fn try_send(&self, url: &str, secret: &str, event: &Event) -> anyhow::Result<Outcome> {
+    async fn try_send(
+        &self,
+        url: &str,
+        secrets: &[String],
+        event: &Event,
+    ) -> anyhow::Result<Outcome> {
         if !self.allow_private_destinations
             && let Some(ip) = literal_ip(url)
             && !is_public(ip)
@@ -362,7 +449,13 @@ impl Sender {
         }
         let body = serde_json::to_vec(event)?;
         let timestamp = Utc::now().timestamp();
-        let signature = sign(secret, &event.id, timestamp, &body)?;
+        // Standard Webhooks allows several space-separated signatures; receivers
+        // accept the request if any verifies, which makes rotation seamless.
+        let signatures: Vec<String> = secrets
+            .iter()
+            .map(|secret| sign(secret, &event.id, timestamp, &body))
+            .collect::<anyhow::Result<_>>()?;
+        let signature = signatures.join(" ");
         let response = self
             .client
             .post(url)
@@ -545,15 +638,11 @@ mod tests {
 
     #[test]
     fn backs_off_then_gives_up() {
+        let policy = RetryPolicy::default();
         let now = Utc::now();
-        assert_eq!(
-            next_attempt_at(1, now),
-            Some(now + chrono::Duration::seconds(10))
-        );
-        assert_eq!(
-            next_attempt_at(7, now),
-            Some(now + chrono::Duration::hours(12))
-        );
-        assert_eq!(next_attempt_at(MAX_ATTEMPTS, now), None);
+        let after = |attempts| policy.next_attempt_at(attempts, now);
+        assert_eq!(after(1), Some(now + chrono::Duration::seconds(10)));
+        assert_eq!(after(7), Some(now + chrono::Duration::hours(12)));
+        assert_eq!(after(8), None, "8 attempts in total");
     }
 }

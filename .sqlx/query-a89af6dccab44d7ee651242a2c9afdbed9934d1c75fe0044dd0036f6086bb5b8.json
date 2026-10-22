@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE webhooks\n         SET enabled = 0, updated_at = ?1,\n             disabled_reason = 'disabled automatically: ' || consecutive_failed_deliveries\n                 || ' deliveries in a row failed every attempt, with no successful delivery since '\n                 || failing_since\n         WHERE id = ?2 AND enabled = 1\n           AND consecutive_failed_deliveries >= ?3 AND failing_since <= ?4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "a89af6dccab44d7ee651242a2c9afdbed9934d1c75fe0044dd0036f6086bb5b8"
+}

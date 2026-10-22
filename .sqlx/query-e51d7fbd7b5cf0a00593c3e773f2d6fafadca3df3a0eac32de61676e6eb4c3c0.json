@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE webhooks\n         SET failing_since = coalesce(failing_since, ?),\n             consecutive_failed_deliveries = consecutive_failed_deliveries + ?\n         WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "e51d7fbd7b5cf0a00593c3e773f2d6fafadca3df3a0eac32de61676e6eb4c3c0"
+}

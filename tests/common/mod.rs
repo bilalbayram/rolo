@@ -12,7 +12,7 @@ use axum::http::{Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
 use rolo::AppConfig;
 use rolo::db::Db;
-use rolo::delivery::{self, WorkerConfig};
+use rolo::delivery::{self, RetryPolicy, WorkerConfig};
 use rolo::service::api_keys::{self, Scope};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -49,9 +49,15 @@ impl TestApp {
 
     /// App with the webhook worker polling every 20ms.
     pub async fn with_worker(destinations: Destinations) -> Self {
+        Self::with_retry_policy(destinations, RetryPolicy::default()).await
+    }
+
+    /// App with the webhook worker polling every 20ms, using `retry`.
+    pub async fn with_retry_policy(destinations: Destinations, retry: RetryPolicy) -> Self {
         let config = WorkerConfig {
             allow_private_destinations: matches!(destinations, Destinations::AllowPrivate),
             poll_interval: std::time::Duration::from_millis(20),
+            retry,
         };
         Self::start(Some(config)).await
     }

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE webhooks SET failing_since = NULL, consecutive_failed_deliveries = 0\n                     WHERE id = ? AND (failing_since IS NOT NULL OR consecutive_failed_deliveries > 0)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "cb12970659a7558bce92599d38331ecadb04a4e1c0a0d78434df51367345d61a"
+}

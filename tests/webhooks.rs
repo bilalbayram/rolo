@@ -10,6 +10,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use common::{Destinations, TestApp};
+use rolo::delivery::RetryPolicy;
 use serde_json::{Value, json};
 
 /// A local HTTP endpoint that records webhook requests.
@@ -249,4 +250,120 @@ async fn validates_webhook_input_and_scope() {
         )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn rotation_signs_with_both_secrets_during_grace_period() {
+    let app = TestApp::with_worker(Destinations::AllowPrivate).await;
+    let receiver = Receiver::start().await;
+    let webhook = create_webhook(&app, json!({"url": receiver.url})).await;
+    let webhook_id = webhook["id"].as_str().unwrap();
+    let old_secret = webhook["secret"].as_str().unwrap();
+
+    let (status, rotated) = app
+        .post(
+            &format!("/v1/webhooks/{webhook_id}/rotate-secret"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{rotated}");
+    let new_secret = rotated["secret"].as_str().unwrap();
+    assert_ne!(new_secret, old_secret);
+    assert!(rotated["previous_secret_expires_at"].is_string());
+
+    app.post("/v1/companies", json!({"name": "Acme"})).await;
+    let (headers, body) = eventually("delivery", || async { receiver.requests().pop() }).await;
+    let header = |name: &str| headers[name].to_str().unwrap().to_string();
+    let (id, timestamp) = (header("webhook-id"), header("webhook-timestamp"));
+    let expected = format!(
+        "{} {}",
+        expected_signature(new_secret, &id, &timestamp, &body),
+        expected_signature(old_secret, &id, &timestamp, &body)
+    );
+    assert_eq!(header("webhook-signature"), expected);
+
+    // With no grace period, only the newest secret signs.
+    let (_, rotated_again) = app
+        .post(
+            &format!("/v1/webhooks/{webhook_id}/rotate-secret?grace_period_hours=0"),
+            json!({}),
+        )
+        .await;
+    let newest_secret = rotated_again["secret"].as_str().unwrap();
+    app.post("/v1/companies", json!({"name": "Beta"})).await;
+    let (headers, body) = eventually("second delivery", || async {
+        let mut requests = receiver.requests();
+        (requests.len() == 2).then(|| requests.pop().unwrap())
+    })
+    .await;
+    let header = |name: &str| headers[name].to_str().unwrap().to_string();
+    assert_eq!(
+        header("webhook-signature"),
+        expected_signature(
+            newest_secret,
+            &header("webhook-id"),
+            &header("webhook-timestamp"),
+            &body
+        )
+    );
+
+    let (status, _) = app
+        .post(
+            &format!("/v1/webhooks/{webhook_id}/rotate-secret?grace_period_hours=500"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn failing_endpoint_is_disabled_and_can_be_reenabled() {
+    let policy = RetryPolicy {
+        backoff: vec![],
+        disable_after_failed_deliveries: 2,
+        disable_after_failing_for: Duration::ZERO,
+    };
+    let app = TestApp::with_retry_policy(Destinations::AllowPrivate, policy).await;
+    let receiver = Receiver::start().await;
+    receiver.respond_with(503);
+    let webhook = create_webhook(&app, json!({"url": receiver.url})).await;
+    let uri = format!("/v1/webhooks/{}", webhook["id"].as_str().unwrap());
+
+    app.post("/v1/companies", json!({"name": "One"})).await;
+    let failing = eventually("first failure", || async {
+        let (_, webhook) = app.get(&uri).await;
+        (webhook["consecutive_failed_deliveries"] == 1).then_some(webhook)
+    })
+    .await;
+    assert_eq!(
+        failing["enabled"], true,
+        "one failed delivery is below the threshold"
+    );
+    assert!(failing["failing_since"].is_string());
+
+    app.post("/v1/companies", json!({"name": "Two"})).await;
+    let disabled = eventually("auto-disable", || async {
+        let (_, webhook) = app.get(&uri).await;
+        (webhook["enabled"] == false).then_some(webhook)
+    })
+    .await;
+    let reason = disabled["disabled_reason"].as_str().unwrap();
+    assert!(
+        reason.starts_with("disabled automatically: 2 deliveries"),
+        "{reason}"
+    );
+
+    // Events while disabled are delivered after re-enabling, which also resets health.
+    app.post("/v1/companies", json!({"name": "Three"})).await;
+    receiver.respond_with(200);
+    let (_, enabled) = app.patch(&uri, json!({"enabled": true})).await;
+    assert_eq!(enabled["disabled_reason"], Value::Null);
+    assert_eq!(enabled["consecutive_failed_deliveries"], 0);
+    eventually("catch-up delivery", || async {
+        let delivered = receiver.requests().iter().any(|(_, body)| {
+            serde_json::from_slice::<Value>(body).unwrap()["data"]["name"] == "Three"
+        });
+        delivered.then_some(())
+    })
+    .await;
 }

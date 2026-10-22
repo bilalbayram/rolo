@@ -1,0 +1,146 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, url, description,\n                  event_types AS \"event_types: Json<Vec<String>>\",\n                  enabled AS \"enabled: bool\",\n                  disabled_reason,\n                  failing_since AS \"failing_since: DateTime<Utc>\",\n                  consecutive_failed_deliveries,\n                  previous_secret_expires_at AS \"previous_secret_expires_at: DateTime<Utc>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM webhooks ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhooks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "url",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhooks",
+            "name": "url"
+          }
+        }
+      },
+      {
+        "name": "description",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhooks",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "name": "event_types: Json<Vec<String>>",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhooks",
+            "name": "event_types"
+          }
+        }
+      },
+      {
+        "name": "enabled: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "webhooks",
+            "name": "enabled"
+          }
+        }
+      },
+      {
+        "name": "disabled_reason",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhooks",
+            "name": "disabled_reason"
+          }
+        }
+      },
+      {
+        "name": "failing_since: DateTime<Utc>",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhooks",
+            "name": "failing_since"
+          }
+        }
+      },
+      {
+        "name": "consecutive_failed_deliveries",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "webhooks",
+            "name": "consecutive_failed_deliveries"
+          }
+        }
+      },
+      {
+        "name": "previous_secret_expires_at: DateTime<Utc>",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhooks",
+            "name": "previous_secret_expires_at"
+          }
+        }
+      },
+      {
+        "name": "created_at: DateTime<Utc>",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhooks",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "updated_at: DateTime<Utc>",
+        "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "webhooks",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "c437e965275b0a001ba27953163b9397030c7e99dd2d418bdd46d9274d8b2ce7"
+}

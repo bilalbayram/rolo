@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE webhooks\n         SET previous_secret = CASE WHEN ?1 IS NULL THEN NULL ELSE secret END,\n             previous_secret_expires_at = ?1, secret = ?2, updated_at = ?3\n         WHERE id = ?4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "4a3d2eb3539e1f977da406d27658b2c1515ee9e6768cd294c6b7b6c8f87b590c"
+}

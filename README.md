@@ -122,6 +122,8 @@ curl -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
 - **Retries:** any non-2xx response, or no response within 10s, is retried with backoff (10s, 1m, 5m, 30m, 2h, 6h, 12h), 8 attempts in total over about 21 hours. Delivery order is not guaranteed; use `seq` or `/v1/events` if order matters.
 - **History and replays:** `GET /v1/webhooks/{id}/deliveries` lists attempts and errors, and `POST .../deliveries/{delivery_id}/retry` re-sends one.
 - **Pausing:** `PATCH {"enabled": false}` pauses a webhook. Re-enabling it delivers everything it missed.
+- **Failing endpoints are disabled automatically** once 5 deliveries in a row have failed every attempt *and* the endpoint has had no successful delivery for 3 days. `disabled_reason` says why, and `failing_since` and `consecutive_failed_deliveries` show its health. Re-enable it with `PATCH {"enabled": true}` to deliver what it missed.
+- **Rotating secrets:** `POST /v1/webhooks/{id}/rotate-secret?grace_period_hours=24` returns a new secret. For the grace period (0–168 hours), each request carries two signatures, from the new and the previous secret, so receivers can switch with no rejected deliveries.
 - **Security:**
   - Destinations on loopback, private, link-local and other internal ranges are blocked, unless you start the server with `--allow-private-webhooks`.
   - Hostnames are checked as they're resolved, so DNS tricks can't get around the block.
@@ -156,7 +158,6 @@ over it. `src/delivery.rs` is the webhook worker. Migrations live in `migrations
 
 ## Roadmap
 
-- Webhook secret rotation, and automatically disabling endpoints that keep failing
 - Custom field definitions (typed and validated) on top of `custom`
 - Users / record owners
 - Backup guide with Litestream
