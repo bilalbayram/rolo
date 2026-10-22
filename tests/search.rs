@@ -165,3 +165,34 @@ async fn mcp_search_tool() {
     assert_ne!(result["isError"], true, "{result}");
     assert_eq!(result["structuredContent"]["data"][0]["id"], contact["id"]);
 }
+
+#[tokio::test]
+async fn turkish_dotless_and_dotted_i_match_plain_i() {
+    let app = TestApp::new().await;
+    let (_, contact) = app
+        .post(
+            "/v1/contacts",
+            json!({"first_name": "Ayşe", "last_name": "Işık", "custom": {"city": "İzmir"}}),
+        )
+        .await;
+    let hits = [("contact".to_string(), "Ayşe Işık".to_string())];
+
+    for q in ["isik", "Işık", "IŞIK", "ışık", "ayse+isi", "izmir", "İZMİR"] {
+        assert_eq!(search(&app, &format!("q={q}")).await, hits, "{q}");
+    }
+    let (_, results) = app.get("/v1/search?q=isik").await;
+    assert_eq!(results["data"][0]["snippet"], "Ayşe **Işık**");
+    let (_, page) = app.get("/v1/contacts?q=IŞIK").await;
+    assert_eq!(ids(&page), [contact["id"].as_str().unwrap()]);
+
+    // Updates are folded too, and old words leave the index.
+    let (status, _) = app
+        .patch(
+            &format!("/v1/contacts/{}", contact["id"].as_str().unwrap()),
+            json!({"last_name": "Yıldız"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(search(&app, "q=yildiz").await.len(), 1);
+    assert!(search(&app, "q=isik").await.is_empty());
+}

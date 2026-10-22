@@ -65,12 +65,14 @@ impl Filter {
 
 /// FTS5 MATCH expression requiring every word of `q` as a prefix, e.g.
 /// `ada@acme` becomes `"ada"* "acme"*`. Quoting each word keeps user input from
-/// being parsed as FTS5 query syntax. `None` if `q` has no words.
+/// being parsed as FTS5 query syntax. Turkish ı and İ become i, as in the index
+/// (see migration 0010), so `isik` and `Işık` match the same words. `None` if
+/// `q` has no words.
 pub fn match_expression(q: &str) -> Option<String> {
     let terms: Vec<String> = q
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty())
-        .map(|word| format!("\"{word}\"*"))
+        .map(|word| format!("\"{}\"*", word.replace(['ı', 'İ'], "i")))
         .collect();
     (!terms.is_empty()).then(|| terms.join(" "))
 }
@@ -151,6 +153,11 @@ mod tests {
             Some(r#""x"* "OR"* "title"*"#.into())
         );
         assert_eq!(match_expression("Zoë"), Some(r#""Zoë"*"#.into()));
+        assert_eq!(
+            match_expression("IŞIK Işık"),
+            Some(r#""IŞIK"* "Işik"*"#.into())
+        );
+        assert_eq!(match_expression("İstanbul"), Some(r#""istanbul"*"#.into()));
         assert_eq!(match_expression(" -- "), None);
     }
 

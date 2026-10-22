@@ -176,7 +176,7 @@ curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:3000/v1/search?q=acme+r
 Full-text search (SQLite FTS5) across contacts, companies, deals and activities:
 
 - **What's searched:** names, emails, phones, domains, deal titles, activity subjects and bodies, and custom field values.
-- **How words match:** each word matches the start of a word (`acm` finds Acme), and all words must match. Accents are ignored, so `zoe` finds Zoë, and punctuation is ignored, so `ada@acme.io` works.
+- **How words match:** each word matches the start of a word (`acm` finds Acme), and all words must match. Accents are ignored, so `zoe` finds Zoë, and Turkish `ı` and `İ` match `i`, so `isik`, `Işık` and `IŞIK` all find Işık. Punctuation is ignored, so `ada@acme.io` works.
 - **Ranking:** matches in titles (names, deal titles, activity subjects) rank highest. Each hit includes a snippet with the matched words in `**bold**`.
 - **List filters:** `q` on the list endpoints uses the same index but keeps the usual ordering and pagination.
 
