@@ -130,6 +130,13 @@ curl -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   - Redirects are not followed.
   - Webhooks can only be managed over REST with a write key. There are no MCP tools for them, so an agent can't create a way to send your data out.
 
+## Backups
+
+The whole CRM is one SQLite file. `rolo backup <file>` writes a consistent
+snapshot while the server keeps running. For continuous replication to
+S3-compatible storage with point-in-time restore, run rolo under
+[Litestream](https://litestream.io). See [docs/backup.md](docs/backup.md).
+
 ## Development
 
 Code follows the [Google Rust style guide](https://google.github.io/styleguide/rustguide.html).
@@ -160,4 +167,3 @@ over it. `src/delivery.rs` is the webhook worker. Migrations live in `migrations
 
 - Custom field definitions (typed and validated) on top of `custom`
 - Users / record owners
-- Backup guide with Litestream

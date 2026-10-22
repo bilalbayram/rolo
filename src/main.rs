@@ -44,6 +44,12 @@ enum Command {
     /// Manage API keys.
     #[command(subcommand)]
     Keys(KeysCommand),
+    /// Write a consistent snapshot of the database to a new file. Safe while
+    /// the server is running. See docs/backup.md for continuous backups.
+    Backup {
+        /// Destination file; must not exist.
+        destination: PathBuf,
+    },
     /// Print the OpenAPI document as JSON.
     Openapi,
 }
@@ -81,6 +87,7 @@ async fn main() -> anyhow::Result<()> {
             allow_private_webhooks,
         } => serve(&cli.db, addr, allowed_hosts, allow_private_webhooks).await?,
         Command::Keys(command) => keys(&cli.db, command).await?,
+        Command::Backup { destination } => backup(&cli.db, &destination).await?,
     }
     Ok(())
 }
@@ -148,6 +155,19 @@ async fn keys(path: &Path, command: KeysCommand) -> anyhow::Result<()> {
             eprintln!("Revoked {id}");
         }
     }
+    Ok(())
+}
+
+async fn backup(path: &Path, destination: &Path) -> anyhow::Result<()> {
+    anyhow::ensure!(path.exists(), "database {} does not exist", path.display());
+    let db = open(path).await?;
+    db.backup_to(destination).await?;
+    let size = std::fs::metadata(destination)?.len();
+    eprintln!(
+        "Backed up {} to {} ({size} bytes)",
+        path.display(),
+        destination.display()
+    );
     Ok(())
 }
 
