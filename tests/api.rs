@@ -321,3 +321,45 @@ async fn mcp_tools_share_data_and_respect_scope() {
     assert_eq!(missing["isError"], true);
     assert_eq!(missing["content"][0]["text"], "not_found: deal not found");
 }
+
+#[tokio::test]
+async fn unknown_query_parameters_are_rejected() {
+    let app = TestApp::new().await;
+    for endpoint in [
+        "/v1/contacts?",
+        "/v1/companies?",
+        "/v1/deals?",
+        "/v1/activities?",
+        "/v1/users?",
+        "/v1/custom-fields?",
+        "/v1/events?",
+        "/v1/search?q=ada&",
+    ] {
+        let (status, body) = app.get(&format!("{endpoint}ownr_id=me")).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{endpoint}");
+        assert_eq!(
+            body["error"]["message"], "unknown query parameter \"ownr_id\"",
+            "{endpoint}"
+        );
+    }
+    let (status, body) = app.get("/v1/contacts?limit=ten").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("invalid query string:")
+    );
+    let (status, _) = app.get("/v1/contacts?limit=10&q=").await;
+    assert_eq!(status, StatusCode::OK);
+
+    // MCP tools are as strict.
+    let result = app
+        .mcp(
+            &app.token,
+            "tools/call",
+            json!({"name": "search_contacts", "arguments": {"ownr_id": "me"}}),
+        )
+        .await;
+    assert_eq!(result["isError"], true, "{result}");
+}

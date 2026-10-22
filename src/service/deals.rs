@@ -94,6 +94,7 @@ pub struct DealPatch {
 
 #[derive(Debug, Clone, Default, Deserialize, IntoParams, JsonSchema)]
 #[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
 pub struct DealQuery {
     /// Full-text search: every word must match as a prefix, e.g. `rollout acm`.
     /// Searches the title and custom field values.

@@ -49,6 +49,7 @@ pub struct UserPatch {
 
 #[derive(Debug, Clone, Default, Deserialize, IntoParams, JsonSchema)]
 #[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
 pub struct UserQuery {
     /// Include deactivated users (default false).
     #[serde(default)]

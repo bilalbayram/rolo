@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
+use axum::extract::rejection::{JsonRejection, PathRejection};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
@@ -69,12 +69,6 @@ impl From<sqlx::Error> for Error {
 
 impl From<JsonRejection> for Error {
     fn from(rejection: JsonRejection) -> Self {
-        Error::Invalid(rejection.body_text())
-    }
-}
-
-impl From<QueryRejection> for Error {
-    fn from(rejection: QueryRejection) -> Self {
         Error::Invalid(rejection.body_text())
     }
 }

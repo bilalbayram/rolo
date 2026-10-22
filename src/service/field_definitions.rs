@@ -101,6 +101,7 @@ pub struct FieldDefinitionPatch {
 
 #[derive(Debug, Clone, Default, Deserialize, IntoParams, JsonSchema)]
 #[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
 pub struct FieldDefinitionQuery {
     pub entity_type: Option<EntityType>,
 }

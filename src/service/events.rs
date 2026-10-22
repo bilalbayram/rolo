@@ -27,6 +27,7 @@ pub struct Event {
 
 #[derive(Debug, Default, Deserialize, IntoParams, JsonSchema)]
 #[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
 pub struct EventQuery {
     /// Return events with `seq` greater than this.
     pub after: Option<i64>,

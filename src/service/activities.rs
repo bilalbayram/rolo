@@ -108,6 +108,7 @@ pub struct ActivityPatch {
 
 #[derive(Debug, Clone, Default, Deserialize, IntoParams, JsonSchema)]
 #[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
 pub struct ActivityQuery {
     /// Full-text search: every word must match as a prefix, e.g. `budget rob`.
     /// Searches the subject, body and custom field values.

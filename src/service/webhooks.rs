@@ -43,6 +43,7 @@ pub struct WebhookWithSecret {
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
 pub struct RotateSecretQuery {
     /// Hours the previous secret keeps signing requests alongside the new one,
     /// 0-168 (default 24). 0 stops using it immediately.
@@ -102,6 +103,7 @@ pub struct Delivery {
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
 pub struct DeliveryQuery {
     pub status: Option<DeliveryStatus>,
     /// 1-200, default 50.

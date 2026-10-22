@@ -62,6 +62,7 @@ pub struct CompanyPatch {
 
 #[derive(Debug, Clone, Default, Deserialize, IntoParams, JsonSchema)]
 #[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
 pub struct CompanyQuery {
     /// Full-text search: every word must match as a prefix, e.g. `acm rob`.
     /// Searches all text fields, including custom field values.

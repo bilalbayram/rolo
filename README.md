@@ -111,6 +111,7 @@ assignee):
 - Lists use cursor pagination: `?limit=50&cursor=<next_cursor>`. Their `q` filter uses the search index (see below).
 - Deals can be filtered by expected close date, with both ends inclusive: `GET /v1/deals?expected_close_from=2026-11-01&expected_close_to=2026-11-30`. They can be sorted with `sort=expected_close_date` (soonest first) or `sort=-expected_close_date` (latest first), with deals without a date last. The default is `sort=id`. With a date sort, `next_cursor` is `<date>/<id>` (`none/<id>` for an undated deal), so pagination stays stable when dates tie.
 - Errors look like `{"error": {"code": "conflict", "message": "..."}}`.
+- Unknown query parameters are rejected with `422` (`unknown query parameter "ownr_id"`), so a mistyped filter fails loudly instead of returning everything. MCP tools reject unknown arguments the same way.
 - Deleting a record keeps the activities linked to it and just unlinks them, so a deal keeps its history.
 
 ## Safe retries

@@ -31,6 +31,7 @@ pub struct SearchResults {
 
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
 pub struct SearchQuery {
     /// Words to find. Each word matches as a prefix (`acm` finds Acme), and all
     /// words must match. Punctuation is ignored.
