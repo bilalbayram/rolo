@@ -1,8 +1,10 @@
+use std::str::FromStr;
+
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sqlx::SqliteExecutor;
 use sqlx::types::Json;
+use sqlx::{SqliteConnection, SqliteExecutor};
 use utoipa::{IntoParams, ToSchema};
 
 use super::api_keys::Principal;
@@ -82,6 +84,78 @@ pub struct ContactPatch {
     /// Merged into existing custom fields; keys set to null are removed.
     #[schema(value_type = Option<Object>)]
     pub custom: Option<CustomFields>,
+}
+
+/// A contact to create, or to merge into an existing contact it matches.
+#[derive(Debug, Clone, Deserialize, ToSchema, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ContactUpsert {
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub email: Option<String>,
+    /// Normalized like on create.
+    pub phone: Option<String>,
+    /// Job title.
+    pub title: Option<String>,
+    pub company_id: Option<String>,
+    /// User ID or `"me"`. On create, omit to default to the API key's user, or
+    /// null for no owner. On update, null leaves the owner unchanged.
+    #[serde(default, deserialize_with = "util::double_option")]
+    pub owner_id: Option<Option<String>>,
+    /// On update, merged into existing custom fields; keys set to null are removed.
+    #[serde(default)]
+    #[schema(value_type = Object)]
+    pub custom: CustomFields,
+    /// How to find the existing contact: `email`, `phone`, or `custom.<key>` for
+    /// a unique custom field. The first key with a value in this body that
+    /// matches a contact wins. Default `["email", "phone"]`.
+    #[schema(value_type = Option<Vec<String>>)]
+    #[schemars(with = "Option<Vec<String>>")]
+    pub match_on: Option<Vec<MatchKey>>,
+}
+
+/// A value [`upsert`] can find an existing contact by.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub enum MatchKey {
+    Email,
+    Phone,
+    /// A custom field defined with `unique: true`.
+    Custom(String),
+}
+
+impl FromStr for MatchKey {
+    type Err = String;
+
+    fn from_str(key: &str) -> std::result::Result<Self, Self::Err> {
+        match key {
+            "email" => Ok(MatchKey::Email),
+            "phone" => Ok(MatchKey::Phone),
+            _ => key
+                .strip_prefix("custom.")
+                .filter(|custom_key| !custom_key.is_empty())
+                .map(|custom_key| MatchKey::Custom(custom_key.to_string()))
+                .ok_or_else(|| {
+                    format!("cannot match on {key:?}; expected email, phone or custom.<key>")
+                }),
+        }
+    }
+}
+
+impl TryFrom<String> for MatchKey {
+    type Error = String;
+
+    fn try_from(key: String) -> std::result::Result<Self, Self::Error> {
+        key.parse()
+    }
+}
+
+/// The result of [`upsert`].
+#[derive(Debug, Serialize, ToSchema, JsonSchema)]
+pub struct Upserted {
+    pub contact: Contact,
+    /// True if a new contact was created; false if an existing one was updated.
+    pub created: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, IntoParams, JsonSchema)]
@@ -193,6 +267,18 @@ pub async fn create(
     region: Region,
     input: NewContact,
 ) -> Result<Contact> {
+    let mut tx = db.writer.begin().await?;
+    let contact = insert(&mut tx, caller, region, input).await?;
+    tx.commit().await?;
+    Ok(contact)
+}
+
+async fn insert(
+    tx: &mut SqliteConnection,
+    caller: &Principal,
+    region: Region,
+    input: NewContact,
+) -> Result<Contact> {
     let now = Utc::now();
     let mut contact = Contact {
         id: util::new_id("con"),
@@ -209,17 +295,11 @@ pub async fn create(
     };
     validate(&contact)?;
 
-    let mut tx = db.writer.begin().await?;
-    users::ensure_assignable(&mut tx, contact.owner_id.as_deref()).await?;
+    users::ensure_assignable(tx, contact.owner_id.as_deref()).await?;
     let custom = std::mem::take(&mut contact.custom.0);
     contact.custom = Json(
-        field_definitions::validate(
-            &mut tx,
-            EntityType::Contact,
-            custom,
-            Write::Create(&contact.id),
-        )
-        .await?,
+        field_definitions::validate(tx, EntityType::Contact, custom, Write::Create(&contact.id))
+            .await?,
     );
     sqlx::query!(
         "INSERT INTO contacts
@@ -240,8 +320,7 @@ pub async fn create(
     )
     .execute(&mut *tx)
     .await?;
-    events::record(&mut tx, "contact.created", &contact.id, &contact).await?;
-    tx.commit().await?;
+    events::record(tx, "contact.created", &contact.id, &contact).await?;
     Ok(contact)
 }
 
@@ -252,8 +331,20 @@ pub async fn update(
     id: &str,
     patch: ContactPatch,
 ) -> Result<Contact> {
-    let owner_id = users::owner_patch(patch.owner_id, caller)?;
     let mut tx = db.writer.begin().await?;
+    let contact = apply(&mut tx, caller, region, id, patch).await?;
+    tx.commit().await?;
+    Ok(contact)
+}
+
+async fn apply(
+    tx: &mut SqliteConnection,
+    caller: &Principal,
+    region: Region,
+    id: &str,
+    patch: ContactPatch,
+) -> Result<Contact> {
+    let owner_id = users::owner_patch(patch.owner_id, caller)?;
     let mut contact = get(&mut *tx, id).await?;
     util::patch(
         &mut contact.first_name,
@@ -272,13 +363,12 @@ pub async fn update(
         patch.company_id.map(util::non_empty),
     );
     if let Some(owner_id) = owner_id {
-        users::ensure_assignable(&mut tx, owner_id.as_deref()).await?;
+        users::ensure_assignable(tx, owner_id.as_deref()).await?;
         contact.owner_id = owner_id;
     }
     if let Some(update) = patch.custom {
         let update =
-            field_definitions::validate(&mut tx, EntityType::Contact, update, Write::Update(id))
-                .await?;
+            field_definitions::validate(tx, EntityType::Contact, update, Write::Update(id)).await?;
         contact.custom.merge(update);
     }
     contact.updated_at = Utc::now();
@@ -302,9 +392,123 @@ pub async fn update(
     )
     .execute(&mut *tx)
     .await?;
-    events::record(&mut tx, "contact.updated", id, &contact).await?;
-    tx.commit().await?;
+    events::record(tx, "contact.updated", id, &contact).await?;
     Ok(contact)
+}
+
+/// Update the first existing contact that `input.match_on` finds, changing
+/// only the fields `input` sets to a non-blank value, or create the contact if
+/// none matches. Owners and custom fields follow the same rules as PATCH.
+pub async fn upsert(
+    db: &Db,
+    caller: &Principal,
+    region: Region,
+    input: ContactUpsert,
+) -> Result<Upserted> {
+    let match_on = input
+        .match_on
+        .clone()
+        .unwrap_or_else(|| vec![MatchKey::Email, MatchKey::Phone]);
+    if match_on.is_empty() {
+        return Err(Error::Invalid("match_on must list at least one key".into()));
+    }
+    let mut tx = db.writer.begin().await?;
+    let upserted = match find_match(&mut tx, region, &input, &match_on).await? {
+        Some(id) => {
+            let patch = ContactPatch {
+                first_name: util::non_empty(input.first_name).map(Some),
+                last_name: util::non_empty(input.last_name).map(Some),
+                email: util::non_empty(input.email).map(Some),
+                phone: util::non_empty(input.phone).map(Some),
+                title: util::non_empty(input.title).map(Some),
+                company_id: util::non_empty(input.company_id).map(Some),
+                owner_id: input.owner_id.flatten().map(Some),
+                custom: Some(input.custom),
+            };
+            Upserted {
+                contact: apply(&mut tx, caller, region, &id, patch).await?,
+                created: false,
+            }
+        }
+        None => {
+            let new = NewContact {
+                first_name: input.first_name,
+                last_name: input.last_name,
+                email: input.email,
+                phone: input.phone,
+                title: input.title,
+                company_id: input.company_id,
+                owner_id: input.owner_id,
+                custom: input.custom,
+            };
+            Upserted {
+                contact: insert(&mut tx, caller, region, new).await?,
+                created: true,
+            }
+        }
+    };
+    tx.commit().await?;
+    Ok(upserted)
+}
+
+/// The first contact matching one of `match_on` that `input` has a value for.
+async fn find_match(
+    conn: &mut SqliteConnection,
+    region: Region,
+    input: &ContactUpsert,
+    match_on: &[MatchKey],
+) -> Result<Option<String>> {
+    // Check every custom key up front, so a bad key fails even without a value.
+    let mut definitions = Vec::new();
+    for key in match_on {
+        if let MatchKey::Custom(key) = key {
+            let definition = field_definitions::get_by_key(conn, EntityType::Contact, key)
+                .await?
+                .filter(|definition| definition.unique)
+                .ok_or_else(|| {
+                    Error::Invalid(format!(
+                        "cannot match on custom.{key}: it is not a unique custom field for contacts"
+                    ))
+                })?;
+            definitions.push(definition);
+        }
+    }
+
+    for key in match_on {
+        let found = match key {
+            MatchKey::Email => match normalize_email(input.email.clone())? {
+                Some(email) => {
+                    sqlx::query_scalar!("SELECT id FROM contacts WHERE lower(email) = ?", email)
+                        .fetch_optional(&mut *conn)
+                        .await?
+                }
+                None => None,
+            },
+            MatchKey::Phone => match normalize_phone(input.phone.clone(), region)? {
+                Some(phone) => {
+                    sqlx::query_scalar!("SELECT id FROM contacts WHERE phone = ?", phone)
+                        .fetch_optional(&mut *conn)
+                        .await?
+                }
+                None => None,
+            },
+            MatchKey::Custom(key) => match input.custom.get(key).filter(|value| !value.is_null()) {
+                Some(value) => {
+                    let definition = definitions
+                        .iter()
+                        .find(|definition| &definition.key == key)
+                        .expect("custom match keys were checked above");
+                    let value = field_definitions::normalize_value(definition, value.clone())?;
+                    field_definitions::find_by_value(conn, EntityType::Contact, key, &value).await?
+                }
+                None => None,
+            },
+        };
+        if found.is_some() {
+            return Ok(found);
+        }
+    }
+    Ok(None)
 }
 
 pub async fn delete(db: &Db, id: &str) -> Result<()> {

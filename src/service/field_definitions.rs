@@ -175,6 +175,18 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<FieldDef
     .ok_or(Error::NotFound("custom field"))
 }
 
+/// The definition of `key` for records of `entity_type`, if there is one.
+pub async fn get_by_key(
+    conn: &mut SqliteConnection,
+    entity_type: EntityType,
+    key: &str,
+) -> Result<Option<FieldDefinition>> {
+    let definitions = list_for(conn, Some(entity_type)).await?;
+    Ok(definitions
+        .into_iter()
+        .find(|definition| definition.key == key))
+}
+
 /// Ordered by record type, then key.
 pub async fn list(db: &Db, query: FieldDefinitionQuery) -> Result<Vec<FieldDefinition>> {
     let mut conn = db.reader.acquire().await?;
@@ -417,6 +429,12 @@ pub async fn find_by_value(
     )
     .fetch_optional(conn)
     .await?)
+}
+
+/// `value` checked and normalized for `definition`, as it would be stored.
+pub fn normalize_value(definition: &FieldDefinition, value: Value) -> Result<Value> {
+    check_value(definition, value)
+        .map_err(|problem| Error::Invalid(format!("custom.{}: {problem}", definition.key)))
 }
 
 /// The normalized value, or a description of why it is invalid.

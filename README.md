@@ -58,7 +58,7 @@ Tools:
 
 - **Find:** `search`, `search_contacts`, `search_companies`, `search_deals`, `list_activities`
 - **Read:** `get_contact`, `get_company`, `get_deal`
-- **Write:** `create_contact`, `update_contact`, `create_company`, `update_company`, `create_deal`, `update_deal`, `log_activity`, `update_activity`
+- **Write:** `upsert_contact`, `create_contact`, `update_contact`, `create_company`, `update_company`, `create_deal`, `update_deal`, `log_activity`, `update_activity`
 - **Reference:** `list_pipelines`, `list_users`, `list_custom_fields`
 
 The `get_*` tools return a record with its context (company, deals, recent
@@ -103,6 +103,25 @@ assignee):
 - Lists use cursor pagination: `?limit=50&cursor=<next_cursor>`. Their `q` filter uses the search index (see below).
 - Errors look like `{"error": {"code": "conflict", "message": "..."}}`.
 - Deleting a record keeps the activities linked to it and just unlinks them, so a deal keeps its history.
+
+## Upserting contacts
+
+`POST /v1/contacts/upsert` records a person without creating duplicates. It's
+the call to use for leads from forms, chats and other integrations:
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+     -d '{"first_name": "Ayşe", "phone": "0532 123 45 67", "custom": {"source": "instagram_dm"}}' \
+     http://127.0.0.1:3000/v1/contacts/upsert
+# 201 {"contact": {...}, "created": true}, then 200 {"contact": {...}, "created": false}
+```
+
+- **Body:** the fields of `POST /v1/contacts`, plus an optional `match_on`, a list of `"email"`, `"phone"` and `"custom.<key>"` (default `["email", "phone"]`).
+- **Matching:** keys are tried in order. The first key that has a value in the body and matches a contact wins. `custom.<key>` needs a custom field defined with `unique: true`, such as `instagram_id`.
+- **When a contact matches,** only the fields the body sets to a non-blank value change. `custom` is merged as in PATCH, and a null `owner_id` leaves the owner alone. The response is `200` with `created: false`.
+- **When none matches,** the contact is created as with `POST /v1/contacts`, and the response is `201` with `created: true`.
+- **Conflicts:** if the body matches one contact by email but its phone belongs to another, it returns `409`.
+- **For agents:** the MCP tool is `upsert_contact`, and the server instructions recommend it for recording people.
 
 ## Phone numbers
 

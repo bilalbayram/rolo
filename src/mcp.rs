@@ -18,7 +18,9 @@ use crate::service::Page;
 use crate::service::activities::{self, Activity, ActivityPatch, ActivityQuery, NewActivity};
 use crate::service::api_keys::Principal;
 use crate::service::companies::{self, Company, CompanyPatch, CompanyQuery, NewCompany};
-use crate::service::contacts::{self, Contact, ContactPatch, ContactQuery, NewContact};
+use crate::service::contacts::{
+    self, Contact, ContactPatch, ContactQuery, ContactUpsert, NewContact, Upserted,
+};
 use crate::service::deals::{self, Deal, DealPatch, DealQuery, NewDeal};
 use crate::service::entity_type::EntityType;
 use crate::service::field_definitions::{self, FieldDefinition, FieldDefinitionQuery};
@@ -34,6 +36,9 @@ emails, meetings and tasks linked to contacts, companies and/or deals).
 - IDs are prefixed: com_, con_, deal_, act_, pip_, stg_, usr_.
 - Use `search` to find anything by name, email, domain or words in notes, then \
 fetch details with get_contact / get_company / get_deal.
+- To record a person, call upsert_contact: it updates the contact with the same \
+email or phone (or a unique custom field such as instagram_id, via match_on) and \
+creates one only if none matches, so it never makes a duplicate.
 - Search before creating to avoid duplicates; emails, phone numbers and company \
 domains are unique. Phone numbers are stored in E.164 form (+905321234567).
 - Deal amounts are integers in minor currency units (cents).
@@ -246,7 +251,8 @@ impl RoloMcp {
         details.await.map(Json).map_err(fail)
     }
 
-    /// Create a contact. Search first: emails must be unique.
+    /// Create a contact. Emails and phone numbers must be unique; to record a
+    /// person who may already exist, use upsert_contact instead.
     #[tool]
     async fn create_contact(
         &self,
@@ -254,6 +260,21 @@ impl RoloMcp {
         Parameters(input): Parameters<NewContact>,
     ) -> ToolResult<Contact> {
         contacts::create(&self.db, writer(&parts)?, self.default_region, input)
+            .await
+            .map(Json)
+            .map_err(fail)
+    }
+
+    /// Record a person: update the existing contact with the same email or phone
+    /// (or the custom fields listed in `match_on`), or create one if none
+    /// matches. Only fields with a value are changed. Prefer this to create_contact.
+    #[tool(annotations(idempotent_hint = true))]
+    async fn upsert_contact(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(input): Parameters<ContactUpsert>,
+    ) -> ToolResult<Upserted> {
+        contacts::upsert(&self.db, writer(&parts)?, self.default_region, input)
             .await
             .map(Json)
             .map_err(fail)

@@ -9,11 +9,14 @@ use crate::api::extract::{Body, Id, Params};
 use crate::error::{ErrorBody, Result};
 use crate::service::Page;
 use crate::service::api_keys::Principal;
-use crate::service::contacts::{self, Contact, ContactPatch, ContactQuery, NewContact};
+use crate::service::contacts::{
+    self, Contact, ContactPatch, ContactQuery, ContactUpsert, NewContact, Upserted,
+};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list, create))
+        .routes(routes!(upsert))
         .routes(routes!(get, update, delete))
 }
 
@@ -42,6 +45,29 @@ async fn create(
         StatusCode::CREATED,
         Json(contacts::create(&state.db, &caller, state.default_region, input).await?),
     ))
+}
+
+/// Create or update a contact
+///
+/// Finds an existing contact by the keys in `match_on` (default email, then
+/// phone; `custom.<key>` needs a unique custom field). If one matches, only the
+/// fields this body sets to a non-blank value are changed and `custom` is
+/// merged; otherwise the contact is created. Returns 200 with `created: false`
+/// after an update, 201 with `created: true` after a create.
+#[utoipa::path(post, path = "/contacts/upsert", tag = "contacts", request_body = ContactUpsert,
+    responses((status = 200, body = Upserted), (status = 201, body = Upserted), (status = 409, body = ErrorBody), (status = 422, body = ErrorBody)))]
+async fn upsert(
+    State(state): State<AppState>,
+    Extension(caller): Extension<Principal>,
+    Body(input): Body<ContactUpsert>,
+) -> Result<(StatusCode, Json<Upserted>)> {
+    let upserted = contacts::upsert(&state.db, &caller, state.default_region, input).await?;
+    let status = if upserted.created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(upserted)))
 }
 
 /// Get a contact
