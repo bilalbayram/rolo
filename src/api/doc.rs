@@ -19,6 +19,7 @@ use utoipa::{Modify, OpenApi};
         (name = "pipelines"),
         (name = "users", description = "People who own records; API keys can act as a user"),
         (name = "activities", description = "Notes, calls, emails, meetings and tasks"),
+        (name = "custom fields", description = "Typed, validated definitions for keys in `custom`"),
         (name = "events", description = "Change feed of every mutation, for sync and integrations"),
         (name = "webhooks", description = "Signed HTTP callbacks for events, with retries"),
     )

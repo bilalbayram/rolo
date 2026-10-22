@@ -19,8 +19,10 @@ use crate::service::api_keys::Principal;
 use crate::service::companies::{self, Company, CompanyPatch, CompanyQuery, NewCompany};
 use crate::service::contacts::{self, Contact, ContactPatch, ContactQuery, NewContact};
 use crate::service::deals::{self, Deal, DealPatch, DealQuery, NewDeal};
+use crate::service::entity_type::EntityType;
+use crate::service::field_definitions::{self, FieldDefinition, FieldDefinitionQuery};
 use crate::service::pipelines::{self, Pipeline};
-use crate::service::search::{self, EntityType, SearchResults};
+use crate::service::search::{self, SearchResults};
 use crate::service::users::{self, User, UserQuery};
 
 const INSTRUCTIONS: &str = "\
@@ -40,7 +42,10 @@ with due_at, and complete them with update_activity + completed_at.
 user this API key belongs to; `\"me\"` means that user anywhere an owner is accepted, \
 so list_activities with owner_id=\"me\" and open=true lists your tasks. Call \
 list_users to find other users.
-- Every record has `custom`, a free-form object for extra fields.";
+- Every record has `custom`, an object for extra fields. Call list_custom_fields \
+to see defined fields: their values are validated by type, select fields only \
+accept their options, and required fields must be set on create. Other keys \
+are free-form.";
 
 type ToolResult<T> = Result<Json<T>, String>;
 
@@ -70,6 +75,11 @@ pub struct Update<P> {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct PipelineList {
     pub pipelines: Vec<Pipeline>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CustomFieldList {
+    pub custom_fields: Vec<FieldDefinition>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -329,6 +339,19 @@ impl RoloMcp {
         companies::update(&self.db, writer(&parts)?, &id, changes)
             .await
             .map(Json)
+            .map_err(fail)
+    }
+
+    /// List defined custom fields (keys, types, select options, required) for
+    /// records' `custom` objects, optionally for one record type.
+    #[tool(annotations(read_only_hint = true))]
+    async fn list_custom_fields(
+        &self,
+        Parameters(query): Parameters<FieldDefinitionQuery>,
+    ) -> ToolResult<CustomFieldList> {
+        field_definitions::list(&self.db, query)
+            .await
+            .map(|custom_fields| Json(CustomFieldList { custom_fields }))
             .map_err(fail)
     }
 

@@ -6,6 +6,8 @@ use sqlx::types::Json;
 use utoipa::{IntoParams, ToSchema};
 
 use super::api_keys::Principal;
+use super::entity_type::EntityType;
+use super::field_definitions::{self, Write};
 use super::{Page, events, users};
 use crate::custom_fields::CustomFields;
 use crate::db::Db;
@@ -128,7 +130,7 @@ pub async fn list(db: &Db, caller: &Principal, query: CompanyQuery) -> Result<Pa
 
 pub async fn create(db: &Db, caller: &Principal, input: NewCompany) -> Result<Company> {
     let now = Utc::now();
-    let company = Company {
+    let mut company = Company {
         id: util::new_id("com"),
         name: util::required(input.name, "name")?,
         domain: normalize_domain(input.domain),
@@ -140,6 +142,10 @@ pub async fn create(db: &Db, caller: &Principal, input: NewCompany) -> Result<Co
 
     let mut tx = db.writer.begin().await?;
     users::ensure_assignable(&mut tx, company.owner_id.as_deref()).await?;
+    let custom = std::mem::take(&mut company.custom.0);
+    company.custom = Json(
+        field_definitions::validate(&mut tx, EntityType::Company, custom, Write::Create).await?,
+    );
     sqlx::query!(
         "INSERT INTO companies (id, name, domain, owner_id, custom, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -173,6 +179,9 @@ pub async fn update(db: &Db, caller: &Principal, id: &str, patch: CompanyPatch) 
         company.owner_id = owner_id;
     }
     if let Some(update) = patch.custom {
+        let update =
+            field_definitions::validate(&mut tx, EntityType::Company, update, Write::Update)
+                .await?;
         company.custom.merge(update);
     }
     company.updated_at = Utc::now();

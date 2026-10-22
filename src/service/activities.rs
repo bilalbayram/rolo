@@ -6,6 +6,8 @@ use sqlx::types::Json;
 use utoipa::{IntoParams, ToSchema};
 
 use super::api_keys::Principal;
+use super::entity_type::EntityType;
+use super::field_definitions::{self, Write};
 use super::{Page, events, users};
 use crate::custom_fields::CustomFields;
 use crate::db::Db;
@@ -206,7 +208,7 @@ pub async fn list(db: &Db, caller: &Principal, query: ActivityQuery) -> Result<P
 
 pub async fn create(db: &Db, caller: &Principal, input: NewActivity) -> Result<Activity> {
     let now = Utc::now();
-    let activity = Activity {
+    let mut activity = Activity {
         id: util::new_id("act"),
         kind: input.kind,
         subject: util::non_empty(input.subject),
@@ -226,6 +228,10 @@ pub async fn create(db: &Db, caller: &Principal, input: NewActivity) -> Result<A
 
     let mut tx = db.writer.begin().await?;
     users::ensure_assignable(&mut tx, activity.owner_id.as_deref()).await?;
+    let custom = std::mem::take(&mut activity.custom.0);
+    activity.custom = Json(
+        field_definitions::validate(&mut tx, EntityType::Activity, custom, Write::Create).await?,
+    );
     sqlx::query!(
         "INSERT INTO activities
              (id, kind, subject, body, contact_id, company_id, deal_id,
@@ -286,6 +292,9 @@ pub async fn update(
         activity.owner_id = owner_id;
     }
     if let Some(update) = patch.custom {
+        let update =
+            field_definitions::validate(&mut tx, EntityType::Activity, update, Write::Update)
+                .await?;
         activity.custom.merge(update);
     }
     activity.updated_at = Utc::now();

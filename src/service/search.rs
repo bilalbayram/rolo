@@ -4,24 +4,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use super::entity_type::EntityType;
 use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::util;
 
 const DEFAULT_LIMIT: i64 = 20;
 const MAX_LIMIT: i64 = 50;
-
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, ToSchema, JsonSchema,
-)]
-#[serde(rename_all = "lowercase")]
-#[sqlx(rename_all = "lowercase")]
-pub enum EntityType {
-    Contact,
-    Company,
-    Deal,
-    Activity,
-}
 
 #[derive(Debug, Clone, Serialize, ToSchema, JsonSchema)]
 pub struct SearchHit {

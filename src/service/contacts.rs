@@ -6,6 +6,8 @@ use sqlx::types::Json;
 use utoipa::{IntoParams, ToSchema};
 
 use super::api_keys::Principal;
+use super::entity_type::EntityType;
+use super::field_definitions::{self, Write};
 use super::{Page, events, users};
 use crate::custom_fields::CustomFields;
 use crate::db::Db;
@@ -166,7 +168,7 @@ pub async fn list(db: &Db, caller: &Principal, query: ContactQuery) -> Result<Pa
 
 pub async fn create(db: &Db, caller: &Principal, input: NewContact) -> Result<Contact> {
     let now = Utc::now();
-    let contact = Contact {
+    let mut contact = Contact {
         id: util::new_id("con"),
         first_name: util::non_empty(input.first_name),
         last_name: util::non_empty(input.last_name),
@@ -183,6 +185,10 @@ pub async fn create(db: &Db, caller: &Principal, input: NewContact) -> Result<Co
 
     let mut tx = db.writer.begin().await?;
     users::ensure_assignable(&mut tx, contact.owner_id.as_deref()).await?;
+    let custom = std::mem::take(&mut contact.custom.0);
+    contact.custom = Json(
+        field_definitions::validate(&mut tx, EntityType::Contact, custom, Write::Create).await?,
+    );
     sqlx::query!(
         "INSERT INTO contacts
              (id, first_name, last_name, email, phone, title, company_id, owner_id, custom,
@@ -230,6 +236,9 @@ pub async fn update(db: &Db, caller: &Principal, id: &str, patch: ContactPatch) 
         contact.owner_id = owner_id;
     }
     if let Some(update) = patch.custom {
+        let update =
+            field_definitions::validate(&mut tx, EntityType::Contact, update, Write::Update)
+                .await?;
         contact.custom.merge(update);
     }
     contact.updated_at = Utc::now();

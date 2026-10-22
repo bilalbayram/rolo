@@ -50,10 +50,12 @@ claude mcp add --transport http rolo http://127.0.0.1:3000/mcp \
   --header "Authorization: Bearer $TOKEN"
 ```
 
-Tools: `search`, `list_users`, `search_contacts`, `get_contact`, `create_contact`, `update_contact`,
-`search_companies`, `get_company`, `create_company`, `update_company`,
-`list_pipelines`, `search_deals`, `get_deal`, `create_deal`, `update_deal`,
-`list_activities`, `log_activity`, `update_activity`.
+Tools:
+
+- **Find:** `search`, `search_contacts`, `search_companies`, `search_deals`, `list_activities`
+- **Read:** `get_contact`, `get_company`, `get_deal`
+- **Write:** `create_contact`, `update_contact`, `create_company`, `update_company`, `create_deal`, `update_deal`, `log_activity`, `update_activity`
+- **Reference:** `list_pipelines`, `list_users`, `list_custom_fields`
 
 The `get_*` tools return a record with its context (company, deals, recent
 activity) so an agent needs fewer round trips. There are no delete tools on
@@ -92,11 +94,27 @@ assignee):
 | User | `usr_` | owns records; `email` is unique; can be deactivated |
 
 - IDs are ULIDs, so they sort by creation time.
-- Every record has `custom`, a free-form JSON object. PATCH merges it, and setting a key to `null` removes that key.
+- Every record has `custom`, a JSON object for extra fields. PATCH merges it, and setting a key to `null` removes that key. Keys can be given typed definitions (see below).
 - PATCH changes only the fields you send. Setting a nullable field to `null` clears it.
 - Lists use cursor pagination: `?limit=50&cursor=<next_cursor>`. Their `q` filter uses the search index (see below).
 - Errors look like `{"error": {"code": "conflict", "message": "..."}}`.
 - Deleting a record keeps the activities linked to it and just unlinks them, so a deal keeps its history.
+
+## Custom fields
+
+`custom` accepts any keys. To make a key typed and validated, define it:
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+     -d '{"entity_type": "contact", "key": "tier", "field_type": "select", "options": ["gold", "silver"], "required": true}' \
+     http://127.0.0.1:3000/v1/custom-fields
+```
+
+- **Types:** `text`, `number`, `boolean`, `date` (`YYYY-MM-DD`), `datetime` (RFC 3339, stored in UTC), `url` (http/https), `email` (stored lowercased), `select` (one of `options`) and `multiselect` (an array of distinct `options`).
+- **Validation:** values for defined keys are checked and normalized on every create and update. All problems are reported in one `422`, e.g. `custom.tier: must be one of: gold, silver; custom.nps: must be a number`.
+- **Required fields** must be set when a record is created, and can't be removed later.
+- **Changes don't apply retroactively.** Existing records aren't revalidated when you change a definition. Deleting a definition keeps the stored values; the key just becomes free-form again. Keys without a definition are always accepted.
+- **For agents:** the `list_custom_fields` MCP tool shows an agent the available fields and their options.
 
 ## Search
 
@@ -173,7 +191,3 @@ cargo test
 Layout: `src/service/` holds the business logic, and every write there also
 records an event. `src/api/` (REST) and `src/mcp.rs` (MCP) are thin wrappers
 over it. `src/delivery.rs` is the webhook worker. Migrations live in `migrations/`.
-
-## Roadmap
-
-- Custom field definitions (typed and validated) on top of `custom`

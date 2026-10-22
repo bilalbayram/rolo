@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 pub struct CustomFields(BTreeMap<String, serde_json::Value>);
 
 impl CustomFields {
+    pub fn get(&self, key: &str) -> Option<&serde_json::Value> {
+        self.0.get(key)
+    }
+
     /// Apply a PATCH: keys set to null are removed, other keys are inserted or replaced.
     pub fn merge(&mut self, update: CustomFields) {
         for (key, value) in update.0 {
@@ -18,6 +22,21 @@ impl CustomFields {
                 self.0.insert(key, value);
             }
         }
+    }
+}
+
+impl IntoIterator for CustomFields {
+    type Item = (String, serde_json::Value);
+    type IntoIter = std::collections::btree_map::IntoIter<String, serde_json::Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl FromIterator<(String, serde_json::Value)> for CustomFields {
+    fn from_iter<I: IntoIterator<Item = (String, serde_json::Value)>>(iter: I) -> Self {
+        Self(iter.into_iter().collect())
     }
 }
 

@@ -4,6 +4,7 @@ mod activities;
 pub mod auth;
 mod companies;
 mod contacts;
+mod custom_fields;
 mod deals;
 pub mod doc;
 mod events;
@@ -28,6 +29,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(activities::router())
         .merge(search::router())
         .merge(users::router())
+        .merge(custom_fields::router())
         .merge(events::router())
         .merge(webhooks::router());
     OpenApiRouter::with_openapi(doc::ApiDoc::openapi()).nest("/v1", v1)

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE custom_field_definitions\n         SET label = ?, description = ?, options = ?, required = ?, updated_at = ?\n         WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "3e167abb1909465d0e48118a35c1ed32835736e5a6acd94c4afcd27f587f4458"
+}

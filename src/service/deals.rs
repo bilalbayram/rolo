@@ -6,6 +6,8 @@ use sqlx::types::Json;
 use utoipa::{IntoParams, ToSchema};
 
 use super::api_keys::Principal;
+use super::entity_type::EntityType;
+use super::field_definitions::{self, Write};
 use super::pipelines::{self, StageKind};
 use super::{Page, events, users};
 use crate::custom_fields::CustomFields;
@@ -218,10 +220,12 @@ pub async fn create(db: &Db, caller: &Principal, input: NewDeal) -> Result<Deal>
     let company_id = util::non_empty(input.company_id);
     let contact_id = util::non_empty(input.contact_id);
     let owner_id = users::owner_for_new(input.owner_id, caller)?;
-    let custom = Json(input.custom);
 
     let mut tx = db.writer.begin().await?;
     users::ensure_assignable(&mut tx, owner_id.as_deref()).await?;
+    let custom =
+        field_definitions::validate(&mut tx, EntityType::Deal, input.custom, Write::Create).await?;
+    let custom = Json(custom);
     let stage = match util::non_empty(input.stage_id) {
         Some(stage_id) => pipelines::get_stage(&mut *tx, &stage_id).await?,
         None => {
@@ -288,6 +292,8 @@ pub async fn update(db: &Db, caller: &Principal, id: &str, patch: DealPatch) -> 
         deal.owner_id = owner_id;
     }
     if let Some(update) = patch.custom {
+        let update =
+            field_definitions::validate(&mut tx, EntityType::Deal, update, Write::Update).await?;
         deal.custom.merge(update);
     }
     deal.updated_at = now;

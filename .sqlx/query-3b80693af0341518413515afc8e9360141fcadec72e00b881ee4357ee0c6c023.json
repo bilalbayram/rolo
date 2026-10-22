@@ -1,0 +1,134 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, entity_type AS \"entity_type: EntityType\", key, label, description,\n                  field_type AS \"field_type: FieldType\",\n                  options AS \"options: Json<Vec<String>>\",\n                  required AS \"required: bool\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM custom_field_definitions WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "custom_field_definitions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "entity_type: EntityType",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "custom_field_definitions",
+            "name": "entity_type"
+          }
+        }
+      },
+      {
+        "name": "key",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "custom_field_definitions",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "name": "label",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "custom_field_definitions",
+            "name": "label"
+          }
+        }
+      },
+      {
+        "name": "description",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "custom_field_definitions",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "name": "field_type: FieldType",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "custom_field_definitions",
+            "name": "field_type"
+          }
+        }
+      },
+      {
+        "name": "options: Json<Vec<String>>",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "custom_field_definitions",
+            "name": "options"
+          }
+        }
+      },
+      {
+        "name": "required: bool",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "custom_field_definitions",
+            "name": "required"
+          }
+        }
+      },
+      {
+        "name": "created_at: DateTime<Utc>",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "custom_field_definitions",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "updated_at: DateTime<Utc>",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "custom_field_definitions",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3b80693af0341518413515afc8e9360141fcadec72e00b881ee4357ee0c6c023"
+}
