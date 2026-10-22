@@ -43,6 +43,7 @@ cargo sqlx prepare -- --all-targets # after changing any query or migration; com
 - **`src/mcp.rs`:** MCP tools, also thin wrappers. There are no delete tools and no tools to manage webhooks or definitions, on purpose.
 - **`src/delivery.rs`:** the webhook worker.
 - **Database (`src/db.rs`):** a single-connection writer pool plus a read-only reader pool. Run one `rolo serve` per database.
+- **Phones (`src/phone.rs`):** contact phones are stored in E.164 and unique when present. Contact services take the default `Region` (`--default-region`, in `AppState`) to read local numbers.
 - **IDs:** prefixed monotonic ULIDs (`con_`, `com_`, `deal_`, `act_`, `usr_`, ...); list ordering and cursors rely on them.
 - **Migrations** in `migrations/` are append-only: never edit a released migration.
 

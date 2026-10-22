@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, first_name, last_name, email, phone, title, company_id, owner_id,\n                  custom AS \"custom: Json<CustomFields>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM contacts\n           WHERE (?1 IS NULL OR id IN (\n                      SELECT d.entity_id FROM search_index\n                      JOIN search_documents d ON d.rowid = search_index.rowid\n                      WHERE search_index MATCH ?1))\n             AND (?2 IS NULL OR company_id = ?2)\n             AND (?3 IS NULL OR owner_id = ?3 OR (?3 = ?4 AND owner_id IS NULL))\n             AND (?5 IS NULL OR id > ?5)\n           ORDER BY id\n           LIMIT ?6",
+  "query": "SELECT id, first_name, last_name, email, phone, title, company_id, owner_id,\n                  custom AS \"custom: Json<CustomFields>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM contacts\n           WHERE (?1 IS NULL OR id IN (\n                      SELECT d.entity_id FROM search_index\n                      JOIN search_documents d ON d.rowid = search_index.rowid\n                      WHERE search_index MATCH ?1))\n             AND (?2 IS NULL OR company_id = ?2)\n             AND (?3 IS NULL OR owner_id = ?3 OR (?3 = ?4 AND owner_id IS NULL))\n             AND (?5 IS NULL OR phone = ?5)\n             AND (?6 IS NULL OR id > ?6)\n           ORDER BY id\n           LIMIT ?7",
   "describe": {
     "columns": [
       {
@@ -126,7 +126,7 @@
       }
     ],
     "parameters": {
-      "Right": 6
+      "Right": 7
     },
     "nullable": [
       false,
@@ -142,5 +142,5 @@
       false
     ]
   },
-  "hash": "fe0f087e650ac93803898dbcd9e81390973e7d2226d9df41cc6a8e5b5a620e0c"
+  "hash": "b5d8f6208cfd08ba45532881725a4fc8e8c0e0facf5e613b2d711f8e3bbdf67a"
 }

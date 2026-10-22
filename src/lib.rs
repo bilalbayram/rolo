@@ -7,6 +7,7 @@ pub mod db;
 pub mod delivery;
 pub mod error;
 pub mod mcp;
+pub mod phone;
 pub mod service;
 pub mod util;
 
@@ -20,23 +21,32 @@ use tower_http::trace::TraceLayer;
 use utoipa_scalar::{Scalar, Servable};
 
 use crate::db::Db;
+use crate::phone::Region;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: Db,
+    /// How to read phone numbers written without a country code.
+    pub default_region: Region,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct AppConfig {
     /// `Host` header values the MCP endpoint accepts (DNS-rebinding protection).
     /// Empty means loopback only.
     pub allowed_hosts: Vec<String>,
+    /// How to read phone numbers written without a country code.
+    pub default_region: Region,
 }
 
 /// The HTTP application: REST at `/v1`, MCP at `/mcp`, docs at `/docs`.
 /// Webhook delivery runs separately; see [`delivery::spawn`].
 pub fn app(db: Db, config: AppConfig) -> Router {
-    let state = AppState { db: db.clone() };
+    let default_region = config.default_region;
+    let state = AppState {
+        db: db.clone(),
+        default_region,
+    };
     let authenticate = middleware::from_fn_with_state(state.clone(), api::auth::authenticate);
 
     let (rest, openapi) = api::router().split_for_parts();
@@ -51,7 +61,7 @@ pub fn app(db: Db, config: AppConfig) -> Router {
         mcp_config = mcp_config.with_allowed_hosts(config.allowed_hosts);
     }
     let mcp = StreamableHttpService::new(
-        move || Ok(mcp::RoloMcp::new(db.clone())),
+        move || Ok(mcp::RoloMcp::new(db.clone(), default_region)),
         Arc::new(LocalSessionManager::default()),
         mcp_config,
     );

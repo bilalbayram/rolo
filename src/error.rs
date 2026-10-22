@@ -89,6 +89,8 @@ fn unique_violation_message(message: &str) -> String {
     // SQLite reports expression indexes as "index 'name'" rather than column names.
     if message.contains("contacts_email_key") {
         "a contact with this email already exists".into()
+    } else if message.contains("contacts.phone") || message.contains("contacts_phone_key") {
+        "a contact with this phone already exists".into()
     } else if message.contains("companies_domain_key") {
         "a company with this domain already exists".into()
     } else if message.contains("users_email_key") {

@@ -12,6 +12,7 @@ use super::{Page, events, users};
 use crate::custom_fields::CustomFields;
 use crate::db::Db;
 use crate::error::{Error, Result};
+use crate::phone::{self, Region};
 use crate::service::search::Filter;
 use crate::util;
 
@@ -22,6 +23,7 @@ pub struct Contact {
     pub last_name: Option<String>,
     /// Lowercased; unique across contacts.
     pub email: Option<String>,
+    /// E.164, e.g. `+905321234567`; unique across contacts.
     pub phone: Option<String>,
     /// Job title.
     pub title: Option<String>,
@@ -43,6 +45,8 @@ pub struct NewContact {
     pub last_name: Option<String>,
     /// Must be unique.
     pub email: Option<String>,
+    /// Stored in E.164 form; must be unique. Numbers without a country code
+    /// are read in the server's default region.
     pub phone: Option<String>,
     /// Job title.
     pub title: Option<String>,
@@ -89,6 +93,9 @@ pub struct ContactQuery {
     pub company_id: Option<String>,
     /// A user ID, `me`, or `none` for contacts without an owner.
     pub owner_id: Option<String>,
+    /// Exact phone number, normalized like stored numbers, so `0532 123 45 67`
+    /// finds `+905321234567`.
+    pub phone: Option<String>,
     /// 1-200, default 50.
     pub limit: Option<i64>,
     /// `next_cursor` from the previous page.
@@ -103,6 +110,12 @@ fn normalize_email(email: Option<String>) -> Result<Option<String>> {
         return Err(Error::Invalid(format!("invalid email: {e}")));
     }
     Ok(email)
+}
+
+fn normalize_phone(phone: Option<String>, region: Region) -> Result<Option<String>> {
+    util::non_empty(phone)
+        .map(|phone| phone::normalize(&phone, region))
+        .transpose()
 }
 
 fn validate(contact: &Contact) -> Result<()> {
@@ -129,7 +142,12 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Contact>
     .ok_or(Error::NotFound("contact"))
 }
 
-pub async fn list(db: &Db, caller: &Principal, query: ContactQuery) -> Result<Page<Contact>> {
+pub async fn list(
+    db: &Db,
+    caller: &Principal,
+    region: Region,
+    query: ContactQuery,
+) -> Result<Page<Contact>> {
     let limit = util::clamp_limit(query.limit);
     let search = match Filter::from_query(query.q) {
         Filter::All => None,
@@ -137,6 +155,7 @@ pub async fn list(db: &Db, caller: &Principal, query: ContactQuery) -> Result<Pa
         Filter::Nothing => return Ok(Page::empty()),
     };
     let owner_id = users::resolve_me(query.owner_id, caller)?;
+    let phone = normalize_phone(query.phone, region)?;
     let fetch = limit + 1;
     let rows = sqlx::query_as!(
         Contact,
@@ -151,13 +170,15 @@ pub async fn list(db: &Db, caller: &Principal, query: ContactQuery) -> Result<Pa
                       WHERE search_index MATCH ?1))
              AND (?2 IS NULL OR company_id = ?2)
              AND (?3 IS NULL OR owner_id = ?3 OR (?3 = ?4 AND owner_id IS NULL))
-             AND (?5 IS NULL OR id > ?5)
+             AND (?5 IS NULL OR phone = ?5)
+             AND (?6 IS NULL OR id > ?6)
            ORDER BY id
-           LIMIT ?6"#,
+           LIMIT ?7"#,
         search,
         query.company_id,
         owner_id,
         users::NO_OWNER,
+        phone,
         query.cursor,
         fetch,
     )
@@ -166,14 +187,19 @@ pub async fn list(db: &Db, caller: &Principal, query: ContactQuery) -> Result<Pa
     Ok(util::paginate(rows, limit, |c| &c.id))
 }
 
-pub async fn create(db: &Db, caller: &Principal, input: NewContact) -> Result<Contact> {
+pub async fn create(
+    db: &Db,
+    caller: &Principal,
+    region: Region,
+    input: NewContact,
+) -> Result<Contact> {
     let now = Utc::now();
     let mut contact = Contact {
         id: util::new_id("con"),
         first_name: util::non_empty(input.first_name),
         last_name: util::non_empty(input.last_name),
         email: normalize_email(input.email)?,
-        phone: util::non_empty(input.phone),
+        phone: normalize_phone(input.phone, region)?,
         title: util::non_empty(input.title),
         company_id: util::non_empty(input.company_id),
         owner_id: users::owner_for_new(input.owner_id, caller)?,
@@ -213,7 +239,13 @@ pub async fn create(db: &Db, caller: &Principal, input: NewContact) -> Result<Co
     Ok(contact)
 }
 
-pub async fn update(db: &Db, caller: &Principal, id: &str, patch: ContactPatch) -> Result<Contact> {
+pub async fn update(
+    db: &Db,
+    caller: &Principal,
+    region: Region,
+    id: &str,
+    patch: ContactPatch,
+) -> Result<Contact> {
     let owner_id = users::owner_patch(patch.owner_id, caller)?;
     let mut tx = db.writer.begin().await?;
     let mut contact = get(&mut *tx, id).await?;
@@ -225,7 +257,9 @@ pub async fn update(db: &Db, caller: &Principal, id: &str, patch: ContactPatch) 
     if let Some(email) = patch.email {
         contact.email = normalize_email(email)?;
     }
-    util::patch(&mut contact.phone, patch.phone.map(util::non_empty));
+    if let Some(phone) = patch.phone {
+        contact.phone = normalize_phone(phone, region)?;
+    }
     util::patch(&mut contact.title, patch.title.map(util::non_empty));
     util::patch(
         &mut contact.company_id,
@@ -276,4 +310,76 @@ pub async fn delete(db: &Db, id: &str) -> Result<()> {
     events::record(&mut tx, "contact.deleted", id, &contact).await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// What [`normalize_stored_phones`] changed.
+#[derive(Debug, Default)]
+pub struct StoredPhones {
+    /// How many phone numbers were rewritten in E.164 form.
+    pub normalized: usize,
+    /// Contacts whose phone number was invalid, or once normalized belonged to
+    /// another contact. The number was moved to `custom.legacy_phone`.
+    pub set_aside: Vec<String>,
+}
+
+/// Rewrite stored phone numbers that aren't in E.164 form, such as those saved
+/// before numbers were normalized, reading them in `region`. Nothing is lost:
+/// a number that is invalid, or that another contact already has, moves to
+/// `custom.legacy_phone`. Each changed contact gets a `contact.updated` event.
+pub async fn normalize_stored_phones(db: &Db, region: Region) -> Result<StoredPhones> {
+    let mut report = StoredPhones::default();
+    let mut tx = db.writer.begin().await?;
+    let ids = sqlx::query_scalar!(
+        r#"SELECT id AS "id!" FROM contacts
+           WHERE phone IS NOT NULL
+             AND (substr(phone, 1, 1) <> '+' OR substr(phone, 2) GLOB '*[^0-9]*')
+           ORDER BY id"#,
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    for id in ids {
+        let mut contact = get(&mut *tx, &id).await?;
+        let stored = contact
+            .phone
+            .take()
+            .expect("selected contacts have a phone");
+        let normalized = match phone::normalize(&stored, region) {
+            Ok(normalized) => {
+                let taken = sqlx::query_scalar!(
+                    r#"SELECT EXISTS (SELECT 1 FROM contacts WHERE phone = ? AND id <> ?)
+                       AS "taken: bool""#,
+                    normalized,
+                    id,
+                )
+                .fetch_one(&mut *tx)
+                .await?;
+                (!taken).then_some(normalized)
+            }
+            Err(_) => None,
+        };
+        match normalized {
+            Some(normalized) => {
+                contact.phone = Some(normalized);
+                report.normalized += 1;
+            }
+            None => {
+                let legacy = [("legacy_phone".to_string(), stored.into())];
+                contact.custom.merge(legacy.into_iter().collect());
+                report.set_aside.push(id.clone());
+            }
+        }
+        contact.updated_at = Utc::now();
+        sqlx::query!(
+            "UPDATE contacts SET phone = ?, custom = ?, updated_at = ? WHERE id = ?",
+            contact.phone,
+            contact.custom,
+            contact.updated_at,
+            id,
+        )
+        .execute(&mut *tx)
+        .await?;
+        events::record(&mut tx, "contact.updated", &id, &contact).await?;
+    }
+    tx.commit().await?;
+    Ok(report)
 }

@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (SELECT 1 FROM contacts WHERE phone = ? AND id <> ?)\n                       AS \"taken: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "taken: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b33d8f3f58a005ce09f5e8e10275962529ded6864dcacb363ed67a7aab897054"
+}

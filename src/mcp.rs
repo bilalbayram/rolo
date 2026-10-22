@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::Db;
 use crate::error::Error;
+use crate::phone::Region;
 use crate::service::Page;
 use crate::service::activities::{self, Activity, ActivityPatch, ActivityQuery, NewActivity};
 use crate::service::api_keys::Principal;
@@ -33,7 +34,8 @@ emails, meetings and tasks linked to contacts, companies and/or deals).
 - IDs are prefixed: com_, con_, deal_, act_, pip_, stg_, usr_.
 - Use `search` to find anything by name, email, domain or words in notes, then \
 fetch details with get_contact / get_company / get_deal.
-- Search before creating to avoid duplicates; emails and company domains are unique.
+- Search before creating to avoid duplicates; emails, phone numbers and company \
+domains are unique. Phone numbers are stored in E.164 form (+905321234567).
 - Deal amounts are integers in minor currency units (cents).
 - Call list_pipelines to find stage IDs; move a deal with update_deal + stage_id.
 - Log what you did or learned with log_activity; create follow-ups as kind=task \
@@ -142,13 +144,15 @@ fn writer(parts: &Parts) -> Result<&Principal, String> {
 #[derive(Clone)]
 pub struct RoloMcp {
     db: Db,
+    default_region: Region,
     tool_router: ToolRouter<Self>,
 }
 
 impl RoloMcp {
-    pub fn new(db: Db) -> Self {
+    pub fn new(db: Db, default_region: Region) -> Self {
         Self {
             db,
+            default_region,
             tool_router: Self::tool_router(),
         }
     }
@@ -195,14 +199,14 @@ impl RoloMcp {
     }
 
     /// Search contacts by name, email, phone or custom fields, optionally within a
-    /// company or by owner.
+    /// company or by owner. `phone` finds an exact number in any format.
     #[tool(annotations(read_only_hint = true))]
     async fn search_contacts(
         &self,
         Extension(parts): Extension<Parts>,
         Parameters(query): Parameters<ContactQuery>,
     ) -> ToolResult<Page<Contact>> {
-        contacts::list(&self.db, caller(&parts)?, query)
+        contacts::list(&self.db, caller(&parts)?, self.default_region, query)
             .await
             .map(Json)
             .map_err(fail)
@@ -249,7 +253,7 @@ impl RoloMcp {
         Extension(parts): Extension<Parts>,
         Parameters(input): Parameters<NewContact>,
     ) -> ToolResult<Contact> {
-        contacts::create(&self.db, writer(&parts)?, input)
+        contacts::create(&self.db, writer(&parts)?, self.default_region, input)
             .await
             .map(Json)
             .map_err(fail)
@@ -262,7 +266,7 @@ impl RoloMcp {
         Extension(parts): Extension<Parts>,
         Parameters(Update { id, changes }): Parameters<Update<ContactPatch>>,
     ) -> ToolResult<Contact> {
-        contacts::update(&self.db, writer(&parts)?, &id, changes)
+        contacts::update(&self.db, writer(&parts)?, self.default_region, &id, changes)
             .await
             .map(Json)
             .map_err(fail)
@@ -295,7 +299,9 @@ impl RoloMcp {
                 company_id: Some(id.clone()),
                 ..Default::default()
             };
-            let contacts = contacts::list(&self.db, caller, contacts_query).await?.data;
+            let contacts = contacts::list(&self.db, caller, self.default_region, contacts_query)
+                .await?
+                .data;
             let deals_query = DealQuery {
                 company_id: Some(id.clone()),
                 ..Default::default()

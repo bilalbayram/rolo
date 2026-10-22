@@ -44,7 +44,7 @@ async fn contact_crud_validation_and_patch_semantics() {
     let (status, contact) = app
         .post(
             "/v1/contacts",
-            json!({"first_name": "Ada", "email": " Ada@Example.com ", "phone": "+44 1", "custom": {"tier": "gold", "nps": 9}}),
+            json!({"first_name": "Ada", "email": " Ada@Example.com ", "phone": "+44 20 7946 0958", "custom": {"tier": "gold", "nps": 9}}),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED);

@@ -13,6 +13,7 @@ use http_body_util::BodyExt;
 use rolo::AppConfig;
 use rolo::db::Db;
 use rolo::delivery::{self, RetryPolicy, WorkerConfig};
+use rolo::phone::Region;
 use rolo::service::api_keys::{self, Scope};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -80,6 +81,7 @@ impl TestApp {
             db.clone(),
             AppConfig {
                 allowed_hosts: vec![],
+                default_region: Region::TURKEY,
             },
         );
         Self {
@@ -90,6 +92,10 @@ impl TestApp {
             path,
             shutdown,
         }
+    }
+
+    pub fn db(&self) -> &Db {
+        &self.db
     }
 
     /// A write-scoped API key that acts as `user_id`.

@@ -6,8 +6,9 @@ use clap::{Parser, Subcommand};
 use rolo::AppConfig;
 use rolo::db::Db;
 use rolo::delivery::{self, WorkerConfig};
+use rolo::phone::Region;
 use rolo::service::api_keys::{self, Scope};
-use rolo::service::users;
+use rolo::service::{contacts, users};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
@@ -41,6 +42,10 @@ enum Command {
         /// Allow webhooks to loopback, private and other internal addresses.
         #[arg(long, env = "ROLO_ALLOW_PRIVATE_WEBHOOKS")]
         allow_private_webhooks: bool,
+        /// Country code used to read phone numbers written without a country
+        /// code, e.g. TR reads "0532 123 45 67" as +905321234567.
+        #[arg(long, env = "ROLO_DEFAULT_REGION", default_value = "TR")]
+        default_region: Region,
     },
     /// Manage API keys.
     #[command(subcommand)]
@@ -106,7 +111,14 @@ async fn main() -> anyhow::Result<()> {
             addr,
             allowed_hosts,
             allow_private_webhooks,
-        } => serve(&cli.db, addr, allowed_hosts, allow_private_webhooks).await?,
+            default_region,
+        } => {
+            let config = AppConfig {
+                allowed_hosts,
+                default_region,
+            };
+            serve(&cli.db, addr, config, allow_private_webhooks).await?
+        }
         Command::Keys(command) => keys(&cli.db, command).await?,
         Command::Users(command) => users(&cli.db, command).await?,
         Command::Backup { destination } => backup(&cli.db, &destination).await?,
@@ -117,10 +129,11 @@ async fn main() -> anyhow::Result<()> {
 async fn serve(
     path: &Path,
     addr: SocketAddr,
-    allowed_hosts: Vec<String>,
+    config: AppConfig,
     allow_private_webhooks: bool,
 ) -> anyhow::Result<()> {
     let db = open(path).await?;
+    normalize_stored_phones(&db, config.default_region).await?;
     let shutdown = CancellationToken::new();
     let worker_config = WorkerConfig {
         allow_private_destinations: allow_private_webhooks,
@@ -128,7 +141,7 @@ async fn serve(
     };
     let worker = delivery::spawn(db.clone(), worker_config, shutdown.clone())?;
 
-    let app = rolo::app(db, AppConfig { allowed_hosts });
+    let app = rolo::app(db, config);
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("binding {addr}"))?;
@@ -142,6 +155,26 @@ async fn serve(
         .await?;
     shutdown.cancel();
     worker.await.context("webhook worker panicked")?;
+    Ok(())
+}
+
+/// Bring phone numbers stored before normalization into E.164 form.
+async fn normalize_stored_phones(db: &Db, region: Region) -> anyhow::Result<()> {
+    let report = contacts::normalize_stored_phones(db, region)
+        .await
+        .context("normalizing stored phone numbers")?;
+    if report.normalized > 0 {
+        tracing::info!(
+            count = report.normalized,
+            "normalized stored phone numbers to E.164"
+        );
+    }
+    if !report.set_aside.is_empty() {
+        tracing::warn!(
+            contacts = ?report.set_aside,
+            "moved phone numbers that are invalid or duplicates to custom.legacy_phone"
+        );
+    }
     Ok(())
 }
 

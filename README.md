@@ -34,9 +34,13 @@ Configuration (flags or env vars):
 | `--addr` | `ROLO_ADDR` | `127.0.0.1:3000` |
 | `--allowed-host` | `ROLO_ALLOWED_HOSTS` (comma-separated) | loopback only |
 | `--allow-private-webhooks` | `ROLO_ALLOW_PRIVATE_WEBHOOKS` | off |
+| `--default-region` | `ROLO_DEFAULT_REGION` | `TR` |
 
 `--allowed-host` guards the MCP endpoint against DNS rebinding. Set it to your
 public hostname when running rolo behind a domain.
+
+`--default-region` is the country (ISO 3166-1 alpha-2 code) used to read phone
+numbers written without a country code. See [Phone numbers](#phone-numbers).
 
 Run one `rolo serve` per database file, because the webhook worker assumes it
 is the only one sending.
@@ -87,7 +91,7 @@ assignee):
 | Record | ID prefix | Notes |
 |---|---|---|
 | Company | `com_` | `domain` is unique (case-insensitive) |
-| Contact | `con_` | `email` is unique (case-insensitive); optional `company_id` |
+| Contact | `con_` | `email` is unique (case-insensitive); `phone` is stored in E.164 form and unique; optional `company_id` |
 | Pipeline / Stage | `pip_` / `stg_` | stages are `open`, `won` or `lost`; a default "Sales" pipeline is created |
 | Deal | `deal_` | `amount` in minor units (cents); entering a won/lost stage sets `closed_at` |
 | Activity | `act_` | `note`, `call`, `email`, `meeting` or `task`; links to a contact, company and/or deal |
@@ -99,6 +103,17 @@ assignee):
 - Lists use cursor pagination: `?limit=50&cursor=<next_cursor>`. Their `q` filter uses the search index (see below).
 - Errors look like `{"error": {"code": "conflict", "message": "..."}}`.
 - Deleting a record keeps the activities linked to it and just unlinks them, so a deal keeps its history.
+
+## Phone numbers
+
+Contact phone numbers are normalized to [E.164](https://en.wikipedia.org/wiki/E.164)
+with libphonenumber's metadata (the `phonenumber` crate):
+
+- **Local numbers** are read in the default region: with `TR`, `0532 123 45 67` and `532 123 45 67` become `+905321234567`. Numbers with a country code (`+44 20 7946 0958`, `0044 20 7946 0958`) keep it.
+- **Invalid numbers** are rejected with `422`, e.g. `invalid phone number "call me": use international format like +905321234567, or a number valid in TR`.
+- **Unique when present:** a second contact with the same number gets `409` with `a contact with this phone already exists`. Phone is not an identity key; contacts without a phone never clash.
+- **Exact lookup:** `GET /v1/contacts?phone=0532%20123%2045%2067` finds `+905321234567`; the filter is normalized the same way.
+- **Older data:** `rolo serve` rewrites numbers stored before normalization at startup. A number that is invalid, or that another contact already has, moves to `custom.legacy_phone`, so nothing is lost.
 
 ## Custom fields
 

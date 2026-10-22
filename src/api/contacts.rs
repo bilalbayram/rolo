@@ -25,7 +25,9 @@ async fn list(
     Extension(caller): Extension<Principal>,
     Params(query): Params<ContactQuery>,
 ) -> Result<Json<Page<Contact>>> {
-    Ok(Json(contacts::list(&state.db, &caller, query).await?))
+    Ok(Json(
+        contacts::list(&state.db, &caller, state.default_region, query).await?,
+    ))
 }
 
 /// Create a contact
@@ -38,7 +40,7 @@ async fn create(
 ) -> Result<(StatusCode, Json<Contact>)> {
     Ok((
         StatusCode::CREATED,
-        Json(contacts::create(&state.db, &caller, input).await?),
+        Json(contacts::create(&state.db, &caller, state.default_region, input).await?),
     ))
 }
 
@@ -60,7 +62,7 @@ async fn update(
     Body(patch): Body<ContactPatch>,
 ) -> Result<Json<Contact>> {
     Ok(Json(
-        contacts::update(&state.db, &caller, &id, patch).await?,
+        contacts::update(&state.db, &caller, state.default_region, &id, patch).await?,
     ))
 }
 

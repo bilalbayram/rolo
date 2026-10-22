@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!\" FROM contacts\n           WHERE phone IS NOT NULL\n             AND (substr(phone, 1, 1) <> '+' OR substr(phone, 2) GLOB '*[^0-9]*')\n           ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "contacts",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bb8dbf2acdfb684f0ea6373c3a5c95366647bd60436c6d1645eb52029e081054"
+}
