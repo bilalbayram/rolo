@@ -1,0 +1,170 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, kind AS \"kind: ActivityKind\", subject, body, contact_id, company_id, deal_id,\n                  occurred_at AS \"occurred_at: DateTime<Utc>\",\n                  due_at AS \"due_at: DateTime<Utc>\",\n                  completed_at AS \"completed_at: DateTime<Utc>\",\n                  custom AS \"custom: Json<Custom>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM activities\n           WHERE (?1 IS NULL OR contact_id = ?1)\n             AND (?2 IS NULL OR company_id = ?2)\n             AND (?3 IS NULL OR deal_id = ?3)\n             AND (?4 IS NULL OR kind = ?4)\n             AND (?5 IS NULL OR (?5 = (completed_at IS NULL) AND kind = 'task'))\n             AND (?6 IS NULL OR id < ?6)\n           ORDER BY id DESC\n           LIMIT ?7",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "kind: ActivityKind",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "body",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "body"
+          }
+        }
+      },
+      {
+        "name": "contact_id",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "contact_id"
+          }
+        }
+      },
+      {
+        "name": "company_id",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "company_id"
+          }
+        }
+      },
+      {
+        "name": "deal_id",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "deal_id"
+          }
+        }
+      },
+      {
+        "name": "occurred_at: DateTime<Utc>",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "name": "due_at: DateTime<Utc>",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "due_at"
+          }
+        }
+      },
+      {
+        "name": "completed_at: DateTime<Utc>",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "completed_at"
+          }
+        }
+      },
+      {
+        "name": "custom: Json<Custom>",
+        "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "custom"
+          }
+        }
+      },
+      {
+        "name": "created_at: DateTime<Utc>",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "updated_at: DateTime<Utc>",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "activities",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "16bb15abbdbc685987da0fc1fbcecbd45d34a1d65135690c0cb025e2f7316748"
+}

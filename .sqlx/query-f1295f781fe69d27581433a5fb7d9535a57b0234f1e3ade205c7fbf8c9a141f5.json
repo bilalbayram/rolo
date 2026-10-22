@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE deals\n         SET title = ?, amount = ?, currency = ?, stage_id = ?, company_id = ?, contact_id = ?,\n             expected_close_date = ?, closed_at = ?, custom = ?, updated_at = ?\n         WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "f1295f781fe69d27581433a5fb7d9535a57b0234f1e3ade205c7fbf8c9a141f5"
+}

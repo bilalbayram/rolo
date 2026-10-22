@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq, id, type AS event_type, entity_id,\n                  data AS \"data: Json<serde_json::Value>\",\n                  occurred_at AS \"occurred_at: DateTime<Utc>\"\n           FROM events\n           WHERE seq > ?1 AND (?2 IS NULL OR substr(type, 1, length(?2)) = ?2)\n           ORDER BY seq\n           LIMIT ?3",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "event_type",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "type"
+          }
+        }
+      },
+      {
+        "name": "entity_id",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "entity_id"
+          }
+        }
+      },
+      {
+        "name": "data: Json<serde_json::Value>",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "data"
+          }
+        }
+      },
+      {
+        "name": "occurred_at: DateTime<Utc>",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "occurred_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "80c27695bd50b9d8b89941e47463285f87f22fa1a11b80494c35c7fe5de158ae"
+}

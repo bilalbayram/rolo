@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT s.id, s.pipeline_id, s.name, s.position, s.kind AS \"kind: StageKind\"\n           FROM stages s JOIN pipelines p ON p.id = s.pipeline_id\n           WHERE s.kind = 'open' AND (?1 IS NULL OR p.id = ?1)\n           ORDER BY p.position, p.id, s.position, s.id\n           LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "stages",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "pipeline_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "stages",
+            "name": "pipeline_id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "stages",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "position",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "stages",
+            "name": "position"
+          }
+        }
+      },
+      {
+        "name": "kind: StageKind",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "stages",
+            "name": "kind"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b36b64e4a4723140cb49a13cdb77c459d8243cb43ba1210aebc5dd8f8438a0cd"
+}

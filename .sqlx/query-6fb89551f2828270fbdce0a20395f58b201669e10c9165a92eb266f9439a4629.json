@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO pipelines (id, name, position, created_at, updated_at)\n         VALUES (?, ?, (SELECT coalesce(max(position) + 1, 0) FROM pipelines), ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "6fb89551f2828270fbdce0a20395f58b201669e10c9165a92eb266f9439a4629"
+}

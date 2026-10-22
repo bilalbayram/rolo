@@ -1,0 +1,44 @@
+[package]
+name = "rolo"
+version = "0.1.0"
+edition = "2024"
+description = "A headless CRM for agents and apps: REST + MCP on a single SQLite file."
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0.104"
+axum = { version = "0.8.9", features = ["macros"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+clap = { version = "4.6.7", features = ["derive", "env"] }
+hex = "0.4.3"
+rand = "0.10.3"
+rmcp = { version = "3.6.0", features = ["server", "macros", "transport-streamable-http-server"] }
+schemars = { version = "1.2.3", features = ["chrono04"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "migrate", "chrono", "json"] }
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "signal", "net"] }
+tower-http = { version = "0.7.1", features = ["trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+ulid = "3.0.0"
+utoipa = { version = "6.0.0", features = ["chrono"] }
+utoipa-axum = "0.3.0"
+utoipa-scalar = { version = "0.4.0", features = ["axum"] }
+
+[dev-dependencies]
+http-body-util = "0.1.5"
+tower = { version = "0.5.3", features = ["util"] }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 1
+
+[profile.release]
+strip = true
+lto = "thin"

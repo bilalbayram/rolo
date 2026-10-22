@@ -1,0 +1,170 @@
+use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use sqlx::{SqliteExecutor, types::Json};
+use utoipa::{IntoParams, ToSchema};
+
+use super::{Page, events, like_pattern, required};
+use crate::{
+    db::Db,
+    error::{Error, Result},
+    util::{self, Custom, double_option},
+};
+
+#[derive(Debug, Clone, Serialize, ToSchema, JsonSchema)]
+pub struct Company {
+    pub id: String,
+    pub name: String,
+    /// Lowercased; unique across companies.
+    pub domain: Option<String>,
+    #[schema(value_type = Object)]
+    #[schemars(with = "Custom")]
+    pub custom: Json<Custom>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, ToSchema, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NewCompany {
+    pub name: String,
+    /// e.g. `acme.com`. Must be unique.
+    pub domain: Option<String>,
+    /// Arbitrary user-defined fields.
+    #[serde(default)]
+    #[schema(value_type = Object)]
+    pub custom: Custom,
+}
+
+#[derive(Debug, Default, Deserialize, ToSchema, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompanyPatch {
+    pub name: Option<String>,
+    /// Set to null to clear.
+    #[serde(default, deserialize_with = "double_option")]
+    pub domain: Option<Option<String>>,
+    /// Merged into existing custom fields; keys set to null are removed.
+    #[schema(value_type = Option<Object>)]
+    pub custom: Option<Custom>,
+}
+
+#[derive(Debug, Default, Deserialize, IntoParams, JsonSchema)]
+#[into_params(parameter_in = Query)]
+pub struct CompanyQuery {
+    /// Case-insensitive substring match on name or domain.
+    pub q: Option<String>,
+    /// 1-200, default 50.
+    pub limit: Option<i64>,
+    /// `next_cursor` from the previous page.
+    pub cursor: Option<String>,
+}
+
+fn normalize_domain(domain: Option<String>) -> Option<String> {
+    util::non_empty(domain).map(|d| d.to_lowercase())
+}
+
+pub async fn get(ex: impl SqliteExecutor<'_>, id: &str) -> Result<Company> {
+    sqlx::query_as!(
+        Company,
+        r#"SELECT id, name, domain,
+                  custom AS "custom: Json<Custom>",
+                  created_at AS "created_at: DateTime<Utc>",
+                  updated_at AS "updated_at: DateTime<Utc>"
+           FROM companies WHERE id = ?"#,
+        id,
+    )
+    .fetch_optional(ex)
+    .await?
+    .ok_or(Error::NotFound("company"))
+}
+
+pub async fn list(db: &Db, query: CompanyQuery) -> Result<Page<Company>> {
+    let limit = util::clamp_limit(query.limit);
+    let pattern = like_pattern(query.q);
+    let fetch = limit + 1;
+    let rows = sqlx::query_as!(
+        Company,
+        r#"SELECT id, name, domain,
+                  custom AS "custom: Json<Custom>",
+                  created_at AS "created_at: DateTime<Utc>",
+                  updated_at AS "updated_at: DateTime<Utc>"
+           FROM companies
+           WHERE (?1 IS NULL OR name LIKE ?1 ESCAPE '\' OR domain LIKE ?1 ESCAPE '\')
+             AND (?2 IS NULL OR id > ?2)
+           ORDER BY id
+           LIMIT ?3"#,
+        pattern,
+        query.cursor,
+        fetch,
+    )
+    .fetch_all(&db.reader)
+    .await?;
+    Ok(util::paginate(rows, limit, |c| &c.id))
+}
+
+pub async fn create(db: &Db, input: NewCompany) -> Result<Company> {
+    let now = Utc::now();
+    let company = Company {
+        id: util::new_id("com"),
+        name: required(input.name, "name")?,
+        domain: normalize_domain(input.domain),
+        custom: Json(input.custom),
+        created_at: now,
+        updated_at: now,
+    };
+
+    let mut tx = db.writer.begin().await?;
+    sqlx::query!(
+        "INSERT INTO companies (id, name, domain, custom, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)",
+        company.id,
+        company.name,
+        company.domain,
+        company.custom,
+        company.created_at,
+        company.updated_at,
+    )
+    .execute(&mut *tx)
+    .await?;
+    events::record(&mut tx, "company.created", &company.id, &company).await?;
+    tx.commit().await?;
+    Ok(company)
+}
+
+pub async fn update(db: &Db, id: &str, patch: CompanyPatch) -> Result<Company> {
+    let mut tx = db.writer.begin().await?;
+    let mut company = get(&mut *tx, id).await?;
+    if let Some(name) = patch.name {
+        company.name = required(name, "name")?;
+    }
+    if let Some(domain) = patch.domain {
+        company.domain = normalize_domain(domain);
+    }
+    util::merge_custom(&mut company.custom, patch.custom);
+    company.updated_at = Utc::now();
+
+    sqlx::query!(
+        "UPDATE companies SET name = ?, domain = ?, custom = ?, updated_at = ? WHERE id = ?",
+        company.name,
+        company.domain,
+        company.custom,
+        company.updated_at,
+        id,
+    )
+    .execute(&mut *tx)
+    .await?;
+    events::record(&mut tx, "company.updated", id, &company).await?;
+    tx.commit().await?;
+    Ok(company)
+}
+
+pub async fn delete(db: &Db, id: &str) -> Result<()> {
+    let mut tx = db.writer.begin().await?;
+    let company = get(&mut *tx, id).await?;
+    sqlx::query!("DELETE FROM companies WHERE id = ?", id)
+        .execute(&mut *tx)
+        .await?;
+    events::record(&mut tx, "company.deleted", id, &company).await?;
+    tx.commit().await?;
+    Ok(())
+}
