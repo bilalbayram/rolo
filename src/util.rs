@@ -64,6 +64,60 @@ pub fn clamp_limit(limit: Option<i64>) -> i64 {
     limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT)
 }
 
+/// IDs requested with a list endpoint's `ids` parameter, e.g. `ids=con_a,con_b`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdList(Vec<String>);
+
+impl IdList {
+    /// Most IDs one request can ask for.
+    pub const MAX: usize = 100;
+
+    /// The IDs in comma-separated `ids`, without blanks or repeats; `None` if
+    /// absent. More than [`IdList::MAX`] is an error.
+    pub fn parse(ids: Option<String>) -> Result<Option<IdList>> {
+        let Some(ids) = ids else {
+            return Ok(None);
+        };
+        let mut list: Vec<String> = Vec::new();
+        for id in ids.split(',').map(str::trim).filter(|id| !id.is_empty()) {
+            if !list.iter().any(|seen| seen == id) {
+                list.push(id.to_string());
+            }
+        }
+        if list.is_empty() {
+            return Err(Error::Invalid("ids must list at least one ID".into()));
+        }
+        if list.len() > Self::MAX {
+            return Err(Error::Invalid(format!(
+                "ids can list at most {} IDs",
+                Self::MAX
+            )));
+        }
+        Ok(Some(IdList(list)))
+    }
+
+    /// An error for combining `ids` with paging or sorting, which don't apply:
+    /// all matches come back in one page, in the order requested.
+    pub fn exclusive() -> Error {
+        Error::Invalid("ids can't be combined with limit, cursor or sort".into())
+    }
+
+    pub fn count(&self) -> i64 {
+        i64::try_from(self.0.len()).expect("at most IdList::MAX IDs")
+    }
+
+    /// A JSON array of the IDs, for `json_each` in a query.
+    pub fn to_json(&self) -> String {
+        serde_json::Value::from(self.0.clone()).to_string()
+    }
+
+    /// `rows` in the order the IDs were requested.
+    pub fn in_order<T>(&self, mut rows: Vec<T>, id: impl Fn(&T) -> &str) -> Vec<T> {
+        rows.sort_by_key(|row| self.0.iter().position(|wanted| wanted == id(row)));
+        rows
+    }
+}
+
 /// Build a page from `limit + 1` fetched rows; the extra row signals a next page.
 pub fn paginate<T>(mut rows: Vec<T>, limit: i64, id: impl Fn(&T) -> &str) -> Page<T> {
     let limit = usize::try_from(limit).expect("limit is clamped to a positive value");

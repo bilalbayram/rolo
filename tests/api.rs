@@ -391,3 +391,57 @@ async fn lists_sort_oldest_or_newest_first() {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     }
 }
+
+#[tokio::test]
+async fn lists_fetch_records_by_id() {
+    let app = TestApp::new().await;
+    let mut created: Vec<(&str, Vec<String>)> = Vec::new();
+    for (path, body) in [
+        ("/v1/contacts", json!({"first_name": "Ada"})),
+        ("/v1/companies", json!({"name": "Acme"})),
+        ("/v1/deals", json!({"title": "Rollout"})),
+    ] {
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let (status, record) = app.post(path, body.clone()).await;
+            assert_eq!(status, StatusCode::CREATED);
+            ids.push(record["id"].as_str().unwrap().to_string());
+        }
+        created.push((path, ids));
+    }
+
+    for (path, ids) in &created {
+        // The order given; repeats, blanks and unknown IDs are dropped.
+        let query = format!("{},%20missing,{},,{}", ids[2], ids[0], ids[2]);
+        let (status, page) = app.get(&format!("{path}?ids={query}")).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        let found: Vec<&str> = page["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|record| record["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(found, [ids[2].as_str(), ids[0].as_str()], "{path}");
+        assert_eq!(page["next_cursor"], Value::Null);
+
+        for extra in ["&limit=1", "&sort=-id", "&cursor=x"] {
+            let (status, body) = app.get(&format!("{path}?ids={}{extra}", ids[0])).await;
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{path}{extra}");
+            assert_eq!(
+                body["error"]["message"],
+                "ids can't be combined with limit, cursor or sort"
+            );
+        }
+        let too_many: Vec<String> = (0..101).map(|i| format!("x{i}")).collect();
+        let (status, _) = app.get(&format!("{path}?ids={}", too_many.join(","))).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        let (status, _) = app.get(&format!("{path}?ids=,")).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    // Other filters still apply.
+    let (_, page) = app
+        .get(&format!("/v1/deals?ids={}&status=won", created[2].1[0]))
+        .await;
+    assert_eq!(page["data"], json!([]));
+}

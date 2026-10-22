@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, name, domain, owner_id,\n                  custom AS \"custom: Json<CustomFields>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM companies\n           WHERE (?1 IS NULL OR id IN (\n                      SELECT d.entity_id FROM search_index\n                      JOIN search_documents d ON d.rowid = search_index.rowid\n                      WHERE search_index MATCH ?1))\n             AND (?2 IS NULL OR owner_id = ?2 OR (?2 = ?3 AND owner_id IS NULL))\n             AND (?4 IS NULL OR (?5 = 'asc' AND id > ?4) OR (?5 = 'desc' AND id < ?4))\n           ORDER BY CASE WHEN ?5 = 'desc' THEN id END DESC, id ASC\n           LIMIT ?6",
+  "query": "SELECT id, name, domain, owner_id,\n                  custom AS \"custom: Json<CustomFields>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM companies\n           WHERE (?1 IS NULL OR id IN (\n                      SELECT d.entity_id FROM search_index\n                      JOIN search_documents d ON d.rowid = search_index.rowid\n                      WHERE search_index MATCH ?1))\n             AND (?2 IS NULL OR owner_id = ?2 OR (?2 = ?3 AND owner_id IS NULL))\n             AND (?4 IS NULL OR (?5 = 'asc' AND id > ?4) OR (?5 = 'desc' AND id < ?4))\n             AND (?6 IS NULL OR id IN (SELECT value FROM json_each(?6)))\n           ORDER BY CASE WHEN ?5 = 'desc' THEN id END DESC, id ASC\n           LIMIT ?7",
   "describe": {
     "columns": [
       {
@@ -82,7 +82,7 @@
       }
     ],
     "parameters": {
-      "Right": 6
+      "Right": 7
     },
     "nullable": [
       false,
@@ -94,5 +94,5 @@
       false
     ]
   },
-  "hash": "17cdb6796163a1637be39d96d2a717f3ef125617b0f43786e5fbaf66db4d6b68"
+  "hash": "bb2af0e826dba39494a1f607fb488e2d97b3a45e402298d8602220b178a05d8a"
 }

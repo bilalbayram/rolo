@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, first_name, last_name, email, phone, title, company_id, owner_id,\n                  custom AS \"custom: Json<CustomFields>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM contacts\n           WHERE (?1 IS NULL OR id IN (\n                      SELECT d.entity_id FROM search_index\n                      JOIN search_documents d ON d.rowid = search_index.rowid\n                      WHERE search_index MATCH ?1))\n             AND (?2 IS NULL OR company_id = ?2)\n             AND (?3 IS NULL OR owner_id = ?3 OR (?3 = ?4 AND owner_id IS NULL))\n             AND (?5 IS NULL OR phone = ?5)\n             AND (?6 IS NULL OR (?7 = 'asc' AND id > ?6) OR (?7 = 'desc' AND id < ?6))\n             AND (?8 IS NULL OR NOT EXISTS (\n                      SELECT 1 FROM json_each(?8) filter\n                      WHERE json_extract(custom, '$.' || filter.key) IS NOT filter.value))\n           ORDER BY CASE WHEN ?7 = 'desc' THEN id END DESC, id ASC\n           LIMIT ?9",
+  "query": "SELECT id, first_name, last_name, email, phone, title, company_id, owner_id,\n                  custom AS \"custom: Json<CustomFields>\",\n                  created_at AS \"created_at: DateTime<Utc>\",\n                  updated_at AS \"updated_at: DateTime<Utc>\"\n           FROM contacts\n           WHERE (?1 IS NULL OR id IN (\n                      SELECT d.entity_id FROM search_index\n                      JOIN search_documents d ON d.rowid = search_index.rowid\n                      WHERE search_index MATCH ?1))\n             AND (?2 IS NULL OR company_id = ?2)\n             AND (?3 IS NULL OR owner_id = ?3 OR (?3 = ?4 AND owner_id IS NULL))\n             AND (?5 IS NULL OR phone = ?5)\n             AND (?6 IS NULL OR (?7 = 'asc' AND id > ?6) OR (?7 = 'desc' AND id < ?6))\n             AND (?8 IS NULL OR NOT EXISTS (\n                      SELECT 1 FROM json_each(?8) filter\n                      WHERE json_extract(custom, '$.' || filter.key) IS NOT filter.value))\n             AND (?9 IS NULL OR id IN (SELECT value FROM json_each(?9)))\n           ORDER BY CASE WHEN ?7 = 'desc' THEN id END DESC, id ASC\n           LIMIT ?10",
   "describe": {
     "columns": [
       {
@@ -126,7 +126,7 @@
       }
     ],
     "parameters": {
-      "Right": 9
+      "Right": 10
     },
     "nullable": [
       false,
@@ -142,5 +142,5 @@
       false
     ]
   },
-  "hash": "e46f28de8af917f05c257615ebd1e8a8333ee4aba8ca7bcb4f194dda49312c9b"
+  "hash": "96d5d16a9aa566cf823802f6ed13745d2cecc9348744d66363e2838ac0f3e170"
 }

@@ -169,6 +169,10 @@ pub struct DealQuery {
     pub expected_close_from: Option<NaiveDate>,
     /// Only deals expected to close on or before this date, e.g. `2026-11-30`.
     pub expected_close_to: Option<NaiveDate>,
+    /// Comma-separated IDs to fetch, at most 100, e.g. `deal_a,deal_b`. Matches
+    /// come back in the order given, in one page; unknown IDs are left out.
+    /// Can't be combined with `limit`, `cursor` or `sort`.
+    pub ids: Option<String>,
     /// Order: `id` (default, oldest first), `-id` (newest first),
     /// `expected_close_date` (soonest first) or `-expected_close_date` (latest
     /// first). In the date orders, deals without an expected close date come last.
@@ -310,7 +314,14 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Deal> {
 }
 
 pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<Deal>> {
-    let limit = util::clamp_limit(query.limit);
+    let ids = util::IdList::parse(query.ids)?;
+    let limit = match &ids {
+        Some(_) if query.limit.is_some() || query.cursor.is_some() || query.sort.is_some() => {
+            return Err(util::IdList::exclusive());
+        }
+        Some(ids) => ids.count(),
+        None => util::clamp_limit(query.limit),
+    };
     let custom = field_definitions::list_filters(db, EntityType::Deal, query.custom).await?;
     let search = match Filter::from_query(query.q) {
         Filter::All => None,
@@ -328,6 +339,7 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
         Some(cursor) => (None, Some(cursor)),
     };
     let order = sort.order();
+    let ids_json = ids.as_ref().map(util::IdList::to_json);
     let fetch = limit + 1;
     // Sorting by date uses the key coalesce(expected_close_date, undated key)
     // and breaks ties by ID in the same direction; the cursor holds both.
@@ -365,11 +377,12 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
              AND (?15 IS NULL OR NOT EXISTS (
                       SELECT 1 FROM json_each(?15) filter
                       WHERE json_extract(d.custom, '$.' || filter.key) IS NOT filter.value))
+             AND (?16 IS NULL OR d.id IN (SELECT value FROM json_each(?16)))
            ORDER BY CASE WHEN ?12 = 'date' THEN coalesce(d.expected_close_date, ?13) END ASC,
                     CASE WHEN ?12 = '-date' THEN coalesce(d.expected_close_date, ?13) END DESC,
                     CASE WHEN ?12 IN ('-id', '-date') THEN d.id END DESC,
                     d.id ASC
-           LIMIT ?16"#,
+           LIMIT ?17"#,
         search,
         query.pipeline_id,
         query.stage_id,
@@ -385,6 +398,7 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
         sort.undated_key(),
         cursor_key,
         custom,
+        ids_json,
         fetch,
     )
     .fetch_all(&db.reader)
@@ -395,6 +409,9 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
         && let Some(last) = page.data.last()
     {
         page.next_cursor = Some(date_cursor(last));
+    }
+    if let Some(ids) = &ids {
+        page.data = ids.in_order(page.data, |d| &d.id);
     }
     Ok(page)
 }
