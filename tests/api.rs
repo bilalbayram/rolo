@@ -363,3 +363,31 @@ async fn unknown_query_parameters_are_rejected() {
         .await;
     assert_eq!(result["isError"], true, "{result}");
 }
+
+#[tokio::test]
+async fn lists_sort_oldest_or_newest_first() {
+    let app = TestApp::new().await;
+    let mut contacts = Vec::new();
+    let mut companies = Vec::new();
+    for i in 0..5 {
+        let (_, contact) = app
+            .post("/v1/contacts", json!({"first_name": format!("C{i}")}))
+            .await;
+        contacts.push(contact["id"].as_str().unwrap().to_string());
+        let (_, company) = app
+            .post("/v1/companies", json!({"name": format!("Co{i}")}))
+            .await;
+        companies.push(company["id"].as_str().unwrap().to_string());
+    }
+    for (path, mut ids) in [("/v1/contacts", contacts), ("/v1/companies", companies)] {
+        assert_eq!(app.all_ids(&format!("{path}?sort=id")).await, ids, "{path}");
+        ids.reverse();
+        assert_eq!(
+            app.all_ids(&format!("{path}?sort=-id")).await,
+            ids,
+            "{path}"
+        );
+        let (status, _) = app.get(&format!("{path}?sort=name")).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+}

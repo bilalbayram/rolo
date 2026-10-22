@@ -36,21 +36,7 @@ fn ids(page: &Value) -> Vec<String> {
 
 /// Every deal for `query`, fetched two at a time.
 async fn all_pages(app: &TestApp, query: &str) -> Vec<String> {
-    let mut all = Vec::new();
-    let mut cursor: Option<String> = None;
-    loop {
-        let mut uri = format!("/v1/deals?limit=2&{query}");
-        if let Some(cursor) = &cursor {
-            uri.push_str(&format!("&cursor={cursor}"));
-        }
-        let (status, page) = app.get(&uri).await;
-        assert_eq!(status, StatusCode::OK, "{page}");
-        all.extend(ids(&page));
-        match page["next_cursor"].as_str() {
-            Some(next) => cursor = Some(next.to_string()),
-            None => return all,
-        }
-    }
+    app.all_ids(&format!("/v1/deals?{query}")).await
 }
 
 #[tokio::test]
@@ -76,6 +62,9 @@ async fn filters_and_sorts_by_expected_close_date() {
     assert_eq!(ids(&page), pick(&d, &[0, 1, 3]));
 
     assert_eq!(all_pages(&app, "").await, d);
+    let mut newest_first = d.clone();
+    newest_first.reverse();
+    assert_eq!(all_pages(&app, "sort=-id").await, newest_first);
     assert_eq!(
         all_pages(&app, "sort=expected_close_date").await,
         pick(&d, &[1, 3, 0, 4, 2])

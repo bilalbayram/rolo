@@ -110,9 +110,9 @@ pub struct DealQuery {
     pub expected_close_from: Option<NaiveDate>,
     /// Only deals expected to close on or before this date, e.g. `2026-11-30`.
     pub expected_close_to: Option<NaiveDate>,
-    /// Order: `id` (default, oldest first), `expected_close_date` (soonest
-    /// first) or `-expected_close_date` (latest first). Deals without an
-    /// expected close date come last.
+    /// Order: `id` (default, oldest first), `-id` (newest first),
+    /// `expected_close_date` (soonest first) or `-expected_close_date` (latest
+    /// first). In the date orders, deals without an expected close date come last.
     pub sort: Option<DealSort>,
     /// 1-200, default 50.
     pub limit: Option<i64>,
@@ -126,6 +126,9 @@ pub enum DealSort {
     #[default]
     #[serde(rename = "id")]
     Id,
+    /// Newest first.
+    #[serde(rename = "-id")]
+    IdDescending,
     /// Soonest expected close date first, then oldest first.
     #[serde(rename = "expected_close_date")]
     ExpectedCloseDate,
@@ -135,13 +138,21 @@ pub enum DealSort {
 }
 
 impl DealSort {
-    /// The direction the list query sorts in.
-    fn direction(self) -> &'static str {
+    /// The order the list query sorts in.
+    fn order(self) -> &'static str {
         match self {
             DealSort::Id => "id",
-            DealSort::ExpectedCloseDate => "asc",
-            DealSort::ExpectedCloseDateDescending => "desc",
+            DealSort::IdDescending => "-id",
+            DealSort::ExpectedCloseDate => "date",
+            DealSort::ExpectedCloseDateDescending => "-date",
         }
+    }
+
+    fn by_date(self) -> bool {
+        matches!(
+            self,
+            DealSort::ExpectedCloseDate | DealSort::ExpectedCloseDateDescending
+        )
     }
 
     /// The sort key the list query uses for a deal without an expected close
@@ -149,7 +160,7 @@ impl DealSort {
     fn undated_key(self) -> &'static str {
         match self {
             DealSort::ExpectedCloseDateDescending => "",
-            DealSort::Id | DealSort::ExpectedCloseDate => "~",
+            DealSort::Id | DealSort::IdDescending | DealSort::ExpectedCloseDate => "~",
         }
     }
 }
@@ -244,15 +255,15 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
     };
     let owner_id = users::resolve_me(query.owner_id, caller)?;
     let sort = query.sort.unwrap_or_default();
-    let (cursor_key, cursor_id) = match (sort, query.cursor) {
-        (_, None) => (None, None),
-        (DealSort::Id, Some(cursor)) => (None, Some(cursor)),
-        (_, Some(cursor)) => {
+    let (cursor_key, cursor_id) = match query.cursor {
+        None => (None, None),
+        Some(cursor) if sort.by_date() => {
             let (key, id) = parse_date_cursor(&cursor, sort)?;
             (Some(key), Some(id))
         }
+        Some(cursor) => (None, Some(cursor)),
     };
-    let direction = sort.direction();
+    let order = sort.order();
     let fetch = limit + 1;
     // Sorting by date uses the key coalesce(expected_close_date, undated key)
     // and breaks ties by ID in the same direction; the cursor holds both.
@@ -282,13 +293,14 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
              AND (?10 IS NULL OR d.expected_close_date <= ?10)
              AND (?11 IS NULL
                   OR (?12 = 'id' AND d.id > ?11)
-                  OR (?12 = 'asc'
+                  OR (?12 = '-id' AND d.id < ?11)
+                  OR (?12 = 'date'
                       AND (coalesce(d.expected_close_date, ?13), d.id) > (?14, ?11))
-                  OR (?12 = 'desc'
+                  OR (?12 = '-date'
                       AND (coalesce(d.expected_close_date, ?13), d.id) < (?14, ?11)))
-           ORDER BY CASE WHEN ?12 = 'asc' THEN coalesce(d.expected_close_date, ?13) END ASC,
-                    CASE WHEN ?12 = 'desc' THEN coalesce(d.expected_close_date, ?13) END DESC,
-                    CASE WHEN ?12 = 'desc' THEN d.id END DESC,
+           ORDER BY CASE WHEN ?12 = 'date' THEN coalesce(d.expected_close_date, ?13) END ASC,
+                    CASE WHEN ?12 = '-date' THEN coalesce(d.expected_close_date, ?13) END DESC,
+                    CASE WHEN ?12 IN ('-id', '-date') THEN d.id END DESC,
                     d.id ASC
            LIMIT ?15"#,
         search,
@@ -302,7 +314,7 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
         query.expected_close_from,
         query.expected_close_to,
         cursor_id,
-        direction,
+        order,
         sort.undated_key(),
         cursor_key,
         fetch,
@@ -310,7 +322,7 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
     .fetch_all(&db.reader)
     .await?;
     let mut page = util::paginate(rows, limit, |d| &d.id);
-    if sort != DealSort::Id
+    if sort.by_date()
         && page.next_cursor.is_some()
         && let Some(last) = page.data.last()
     {

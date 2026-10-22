@@ -16,4 +16,4 @@ pub mod search;
 pub mod users;
 pub mod webhooks;
 
-pub use page::Page;
+pub use page::{Page, Sort};

@@ -8,7 +8,7 @@ use utoipa::{IntoParams, ToSchema};
 use super::api_keys::Principal;
 use super::entity_type::EntityType;
 use super::field_definitions::{self, Write};
-use super::{Page, events, users};
+use super::{Page, Sort, events, users};
 use crate::custom_fields::CustomFields;
 use crate::db::Db;
 use crate::error::{Error, Result};
@@ -69,6 +69,8 @@ pub struct CompanyQuery {
     pub q: Option<String>,
     /// A user ID, `me`, or `none` for companies without an owner.
     pub owner_id: Option<String>,
+    /// `id` (default, oldest first) or `-id` (newest first).
+    pub sort: Option<Sort>,
     /// 1-200, default 50.
     pub limit: Option<i64>,
     /// `next_cursor` from the previous page.
@@ -102,6 +104,7 @@ pub async fn list(db: &Db, caller: &Principal, query: CompanyQuery) -> Result<Pa
         Filter::Nothing => return Ok(Page::empty()),
     };
     let owner_id = users::resolve_me(query.owner_id, caller)?;
+    let direction = query.sort.unwrap_or_default().direction();
     let fetch = limit + 1;
     let rows = sqlx::query_as!(
         Company,
@@ -115,13 +118,14 @@ pub async fn list(db: &Db, caller: &Principal, query: CompanyQuery) -> Result<Pa
                       JOIN search_documents d ON d.rowid = search_index.rowid
                       WHERE search_index MATCH ?1))
              AND (?2 IS NULL OR owner_id = ?2 OR (?2 = ?3 AND owner_id IS NULL))
-             AND (?4 IS NULL OR id > ?4)
-           ORDER BY id
-           LIMIT ?5"#,
+             AND (?4 IS NULL OR (?5 = 'asc' AND id > ?4) OR (?5 = 'desc' AND id < ?4))
+           ORDER BY CASE WHEN ?5 = 'desc' THEN id END DESC, id ASC
+           LIMIT ?6"#,
         search,
         owner_id,
         users::NO_OWNER,
         query.cursor,
+        direction,
         fetch,
     )
     .fetch_all(&db.reader)

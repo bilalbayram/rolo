@@ -1,6 +1,7 @@
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
+use crate::service::Sort;
 use crate::service::deals::DealSort;
 
 /// Top-level OpenAPI metadata; operations are added by the routers.
@@ -17,7 +18,7 @@ use crate::service::deals::DealSort;
                        it while the first request is still running returns 409."
     ),
     // Enums used only in query parameters aren't collected automatically.
-    components(schemas(DealSort)),
+    components(schemas(DealSort, Sort)),
     modifiers(&BearerAuth),
     security(("bearer" = [])),
     tags(

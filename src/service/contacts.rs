@@ -10,7 +10,7 @@ use utoipa::{IntoParams, ToSchema};
 use super::api_keys::Principal;
 use super::entity_type::EntityType;
 use super::field_definitions::{self, Write};
-use super::{Page, events, users};
+use super::{Page, Sort, events, users};
 use crate::custom_fields::CustomFields;
 use crate::db::Db;
 use crate::error::{Error, Result};
@@ -171,6 +171,8 @@ pub struct ContactQuery {
     /// Exact phone number, normalized like stored numbers, so `0532 123 45 67`
     /// finds `+905321234567`.
     pub phone: Option<String>,
+    /// `id` (default, oldest first) or `-id` (newest first).
+    pub sort: Option<Sort>,
     /// 1-200, default 50.
     pub limit: Option<i64>,
     /// `next_cursor` from the previous page.
@@ -231,6 +233,7 @@ pub async fn list(
     };
     let owner_id = users::resolve_me(query.owner_id, caller)?;
     let phone = normalize_phone(query.phone, region)?;
+    let direction = query.sort.unwrap_or_default().direction();
     let fetch = limit + 1;
     let rows = sqlx::query_as!(
         Contact,
@@ -246,15 +249,16 @@ pub async fn list(
              AND (?2 IS NULL OR company_id = ?2)
              AND (?3 IS NULL OR owner_id = ?3 OR (?3 = ?4 AND owner_id IS NULL))
              AND (?5 IS NULL OR phone = ?5)
-             AND (?6 IS NULL OR id > ?6)
-           ORDER BY id
-           LIMIT ?7"#,
+             AND (?6 IS NULL OR (?7 = 'asc' AND id > ?6) OR (?7 = 'desc' AND id < ?6))
+           ORDER BY CASE WHEN ?7 = 'desc' THEN id END DESC, id ASC
+           LIMIT ?8"#,
         search,
         query.company_id,
         owner_id,
         users::NO_OWNER,
         phone,
         query.cursor,
+        direction,
         fetch,
     )
     .fetch_all(&db.reader)

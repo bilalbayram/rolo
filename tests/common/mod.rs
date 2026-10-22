@@ -180,6 +180,28 @@ impl TestApp {
         (status, replayed, serde_json::from_slice(&bytes).unwrap())
     }
 
+    /// IDs of every record listed at `uri` (which must have a query string),
+    /// fetched two at a time by following `next_cursor`.
+    pub async fn all_ids(&self, uri: &str) -> Vec<String> {
+        let mut ids = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut page_uri = format!("{uri}&limit=2");
+            if let Some(cursor) = &cursor {
+                page_uri.push_str(&format!("&cursor={cursor}"));
+            }
+            let (status, page) = self.get(&page_uri).await;
+            assert_eq!(status, StatusCode::OK, "{page_uri}: {page}");
+            for record in page["data"].as_array().unwrap() {
+                ids.push(record["id"].as_str().unwrap().to_string());
+            }
+            match page["next_cursor"].as_str() {
+                Some(next) => cursor = Some(next.to_string()),
+                None => return ids,
+            }
+        }
+    }
+
     pub async fn get(&self, uri: &str) -> (StatusCode, Value) {
         self.send(Method::GET, uri, Some(&self.token), None).await
     }
