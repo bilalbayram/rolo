@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO idempotency_keys (api_key_id, key, request, body_hash, created_at)\n             VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "1e7838178b461eb558be829ad556b1540b5c8072e8a0c67967e1552823f8e797"
+}

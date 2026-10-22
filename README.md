@@ -104,6 +104,21 @@ assignee):
 - Errors look like `{"error": {"code": "conflict", "message": "..."}}`.
 - Deleting a record keeps the activities linked to it and just unlinks them, so a deal keeps its history.
 
+## Safe retries
+
+Every REST `POST` accepts an `Idempotency-Key` header, so a client can retry
+after a timeout without creating a record twice:
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+     -H 'Idempotency-Key: dm-lead-8f2c' \
+     -d '{"first_name": "Ayşe", "phone": "0532 123 45 67"}' http://127.0.0.1:3000/v1/contacts
+```
+
+- **Replays:** repeating the same request (method, path, query and body) with the same key returns the stored response, status included, with the header `Idempotent-Replayed: true`. Error responses below 500 are replayed too; after a 5xx the key is released so the retry runs again.
+- **Misuse:** reusing a key for a different request returns `422`. Sending it again while the first request is still running returns `409`.
+- **Scope and lifetime:** keys are 1–255 characters, scoped per API key, and kept for 24 hours. A request runs to completion even if the client disconnects, so its retry finds the response.
+
 ## Upserting contacts
 
 `POST /v1/contacts/upsert` records a person without creating duplicates. It's

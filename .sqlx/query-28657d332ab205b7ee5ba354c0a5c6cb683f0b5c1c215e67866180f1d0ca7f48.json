@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE idempotency_keys SET status = ?, content_type = ?, body = ?\n         WHERE api_key_id = ? AND key = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "28657d332ab205b7ee5ba354c0a5c6cb683f0b5c1c215e67866180f1d0ca7f48"
+}

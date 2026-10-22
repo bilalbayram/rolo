@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT request, body_hash, status AS \"status: u16\", content_type, body\n           FROM idempotency_keys WHERE api_key_id = ? AND key = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "request",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "idempotency_keys",
+            "name": "request"
+          }
+        }
+      },
+      {
+        "name": "body_hash",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "idempotency_keys",
+            "name": "body_hash"
+          }
+        }
+      },
+      {
+        "name": "status: u16",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "idempotency_keys",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "name": "content_type",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "idempotency_keys",
+            "name": "content_type"
+          }
+        }
+      },
+      {
+        "name": "body",
+        "ordinal": 4,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "idempotency_keys",
+            "name": "body"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "67d21027bcaf90bbc1e882b422e12bbcf006ac98b42e45870356d78dc8f1bed0"
+}

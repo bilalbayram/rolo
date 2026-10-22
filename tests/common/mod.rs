@@ -139,6 +139,47 @@ impl TestApp {
         (status, value)
     }
 
+    /// POST with an `Idempotency-Key`. Returns the `Idempotent-Replayed` header too.
+    pub async fn post_idempotent(
+        &self,
+        uri: &str,
+        token: &str,
+        key: &str,
+        body: Value,
+    ) -> (StatusCode, Option<String>, Value) {
+        self.send_idempotent(Method::POST, uri, token, key, body)
+            .await
+    }
+
+    /// A request with an `Idempotency-Key`. Returns the `Idempotent-Replayed`
+    /// header too.
+    pub async fn send_idempotent(
+        &self,
+        method: Method,
+        uri: &str,
+        token: &str,
+        key: &str,
+        body: Value,
+    ) -> (StatusCode, Option<String>, Value) {
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(header::HOST, "localhost")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("idempotency-key", key)
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let res = self.router.clone().oneshot(req).await.unwrap();
+        let status = res.status();
+        let replayed = res
+            .headers()
+            .get("idempotent-replayed")
+            .map(|value| value.to_str().unwrap().to_string());
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        (status, replayed, serde_json::from_slice(&bytes).unwrap())
+    }
+
     pub async fn get(&self, uri: &str) -> (StatusCode, Value) {
         self.send(Method::GET, uri, Some(&self.token), None).await
     }

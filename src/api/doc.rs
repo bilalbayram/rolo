@@ -7,7 +7,12 @@ use utoipa::{Modify, OpenApi};
     info(
         title = "rolo",
         description = "Headless CRM API. Authenticate with `Authorization: Bearer <api key>`. \
-                       Every mutation is also published to `/v1/events` and to webhooks."
+                       Every mutation is also published to `/v1/events` and to webhooks.\n\n\
+                       Any POST accepts an `Idempotency-Key` header (1-255 characters). For 24 \
+                       hours, repeating the same request with the same key and API key returns \
+                       the stored response with `Idempotent-Replayed: true` instead of running \
+                       it again. Reusing a key for a different request returns 422, and using \
+                       it while the first request is still running returns 409."
     ),
     modifiers(&BearerAuth),
     security(("bearer" = [])),

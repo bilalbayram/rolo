@@ -9,6 +9,7 @@ pub mod deals;
 pub mod entity_type;
 pub mod events;
 pub mod field_definitions;
+pub mod idempotency;
 mod page;
 pub mod pipelines;
 pub mod search;

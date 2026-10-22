@@ -9,6 +9,7 @@ mod deals;
 pub mod doc;
 mod events;
 pub mod extract;
+pub mod idempotency;
 mod pipelines;
 mod search;
 mod users;

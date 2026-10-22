@@ -50,7 +50,11 @@ pub fn app(db: Db, config: AppConfig) -> Router {
     let authenticate = middleware::from_fn_with_state(state.clone(), api::auth::authenticate);
 
     let (rest, openapi) = api::router().split_for_parts();
+    // Layers run bottom to top: authenticate, check scope, then idempotency.
+    let idempotency =
+        middleware::from_fn_with_state(state.clone(), api::idempotency::replay_or_record);
     let rest = rest
+        .layer(idempotency)
         .layer(middleware::from_fn(api::auth::require_write_for_mutations))
         .layer(authenticate.clone());
 
