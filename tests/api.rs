@@ -38,6 +38,22 @@ async fn requires_valid_key_and_enforces_scope() {
 }
 
 #[tokio::test]
+async fn serves_docs_with_a_favicon() {
+    let app = TestApp::new().await;
+    let (status, html) = app.send(Method::GET, "/docs", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let html = html.as_str().unwrap();
+    assert!(html.contains(r#"<link rel="icon" href="/favicon.svg""#));
+    assert!(html.contains(r#""title":"rolo""#), "the spec is embedded");
+
+    let (status, svg) = app.send(Method::GET, "/favicon.svg", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(svg.as_str().unwrap().starts_with("<svg"));
+    let (status, _) = app.send(Method::GET, "/favicon.ico", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn contact_crud_validation_and_patch_semantics() {
     let app = TestApp::new().await;
 

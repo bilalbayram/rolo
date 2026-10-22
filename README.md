@@ -1,4 +1,12 @@
-# rolo
+<p align="center">
+  <img src="assets/logo/icon.svg" width="96" alt="">
+</p>
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/wordmark-dark.svg">
+    <img src="assets/logo/wordmark.svg" height="48" alt="rolo">
+  </picture>
+</h1>
 
 A headless CRM for agents and apps. One binary, one SQLite file, two interfaces
 over the same data:

@@ -13,6 +13,7 @@ pub mod util;
 
 use std::sync::Arc;
 
+use axum::http::header;
 use axum::routing::get;
 use axum::{Json, Router, middleware};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -38,6 +39,9 @@ pub struct AppConfig {
     /// How to read phone numbers written without a country code.
     pub default_region: Region,
 }
+
+const FAVICON_SVG: &str = include_str!("../assets/logo/icon.svg");
+const FAVICON_ICO: &[u8] = include_bytes!("../assets/logo/favicon.ico");
 
 /// The HTTP application: REST at `/v1`, MCP at `/mcp`, docs at `/docs`.
 /// Webhook delivery runs separately; see [`delivery::spawn`].
@@ -72,11 +76,20 @@ pub fn app(db: Db, config: AppConfig) -> Router {
     let mcp = Router::new().nest_service("/mcp", mcp).layer(authenticate);
 
     let spec = openapi.clone();
+    let docs = Scalar::with_url("/docs", openapi).custom_html(include_str!("api/docs.html"));
     Router::new()
         .merge(rest)
         .merge(mcp)
-        .merge(Scalar::with_url("/docs", openapi))
+        .merge(docs)
         .route("/openapi.json", get(move || async move { Json(spec) }))
+        .route(
+            "/favicon.svg",
+            get(|| async { ([(header::CONTENT_TYPE, "image/svg+xml")], FAVICON_SVG) }),
+        )
+        .route(
+            "/favicon.ico",
+            get(|| async { ([(header::CONTENT_TYPE, "image/x-icon")], FAVICON_ICO) }),
+        )
         .route("/health", get(|| async { "ok" }))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
