@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) AS \"total!: i64\" FROM activities\n                   WHERE (?1 IS NULL OR id IN (\n                              SELECT d.entity_id FROM search_index\n                              JOIN search_documents d ON d.rowid = search_index.rowid\n                              WHERE search_index MATCH ?1))\n                     AND (?2 IS NULL OR contact_id = ?2)\n                     AND (?3 IS NULL OR company_id = ?3)\n                     AND (?4 IS NULL OR deal_id = ?4)\n                     AND (?5 IS NULL OR kind = ?5)\n                     AND (?6 IS NULL OR (?6 = (completed_at IS NULL) AND kind = 'task'))\n                     AND (?7 IS NULL OR owner_id = ?7 OR (?7 = ?8 AND owner_id IS NULL))",
+  "describe": {
+    "columns": [
+      {
+        "name": "total!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f4859e782fcd0d7bdf6e0a45eab4f55920d85ead7e894d6649246a25fc1925c6"
+}

@@ -110,7 +110,8 @@ assignee):
 - Every record has `custom`, a JSON object for extra fields. PATCH merges it, and setting a key to `null` removes that key. Keys can be given typed definitions (see below).
 - PATCH changes only the fields you send. Setting a nullable field to `null` clears it.
 - Lists use cursor pagination: `?limit=50&cursor=<next_cursor>`. Their `q` filter uses the search index (see below).
-- Fetch specific contacts, companies or deals with `?ids=con_a,con_b` (at most 100). Matches come back in the order given, in one page; unknown IDs are left out, and `limit`, `cursor` and `sort` can't be combined with it.
+- Contact, company, deal and activity lists add `"total"` (the number of records matching all filters, across pages) when you pass `include_total=true`, e.g. for "page 2 of 8". It costs an extra count query, so it's off by default and the field is omitted.
+- Fetch specific contacts, companies or deals with `?ids=con_a,con_b` (at most 100). Matches come back in the order given, in one page; unknown IDs are left out, and `limit`, `cursor`, `sort` and `include_total` can't be combined with it.
 - Contacts, companies and deals list oldest first by default (`sort=id`); `sort=-id` lists newest first, and the cursor follows whichever order you chose. Activities always list newest first.
 - Deals can be filtered by expected close date, with both ends inclusive: `GET /v1/deals?expected_close_from=2026-11-01&expected_close_to=2026-11-30`. They can also be sorted with `sort=expected_close_date` (soonest first) or `sort=-expected_close_date` (latest first), with deals without a date last. With a date sort, `next_cursor` is `<date>/<id>` (`none/<id>` for an undated deal), so pagination stays stable when dates tie.
 - Errors look like `{"error": {"code": "conflict", "message": "..."}}`.

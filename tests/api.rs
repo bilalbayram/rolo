@@ -424,12 +424,12 @@ async fn lists_fetch_records_by_id() {
         assert_eq!(found, [ids[2].as_str(), ids[0].as_str()], "{path}");
         assert_eq!(page["next_cursor"], Value::Null);
 
-        for extra in ["&limit=1", "&sort=-id", "&cursor=x"] {
+        for extra in ["&limit=1", "&sort=-id", "&cursor=x", "&include_total=true"] {
             let (status, body) = app.get(&format!("{path}?ids={}{extra}", ids[0])).await;
             assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{path}{extra}");
             assert_eq!(
                 body["error"]["message"],
-                "ids can't be combined with limit, cursor or sort"
+                "ids can't be combined with limit, cursor, sort or include_total"
             );
         }
         let too_many: Vec<String> = (0..101).map(|i| format!("x{i}")).collect();
@@ -444,4 +444,104 @@ async fn lists_fetch_records_by_id() {
         .get(&format!("/v1/deals?ids={}&status=won", created[2].1[0]))
         .await;
     assert_eq!(page["data"], json!([]));
+}
+
+#[tokio::test]
+async fn lists_report_totals_on_request() {
+    let app = TestApp::new().await;
+    let (status, _) = app
+        .post(
+            "/v1/custom-fields",
+            json!({"entity_type": "contact", "key": "source", "field_type": "text"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    for i in 0..5 {
+        let source = if i < 3 { "instagram" } else { "web" };
+        let (status, _) = app
+            .post(
+                "/v1/contacts",
+                json!({"first_name": format!("Ada{i}"), "custom": {"source": source}}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+
+    // Absent unless requested, so default responses are unchanged.
+    for query in ["limit=2", "limit=2&include_total=false"] {
+        let (_, page) = app.get(&format!("/v1/contacts?{query}")).await;
+        assert!(!page.as_object().unwrap().contains_key("total"), "{query}");
+    }
+
+    // The cursor and limit don't change the total; filters do.
+    let (status, first) = app.get("/v1/contacts?limit=2&include_total=true").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        (
+            first["total"].as_i64(),
+            first["data"].as_array().unwrap().len()
+        ),
+        (Some(5), 2)
+    );
+    let cursor = first["next_cursor"].as_str().unwrap();
+    let (_, second) = app
+        .get(&format!(
+            "/v1/contacts?limit=2&include_total=true&sort=id&cursor={cursor}"
+        ))
+        .await;
+    assert_eq!(second["total"], 5);
+    for (query, total) in [
+        ("custom.source=instagram", 3),
+        ("custom.source=instagram&sort=-id&limit=1", 3),
+        ("q=ada3", 1),
+        ("q=nobody", 0),
+        ("q=--", 0),
+    ] {
+        let (status, page) = app
+            .get(&format!("/v1/contacts?include_total=true&{query}"))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{query}: {page}");
+        assert_eq!(page["total"], total, "{query}");
+    }
+
+    let (_, company) = app.post("/v1/companies", json!({"name": "Acme"})).await;
+    let (_, page) = app.get("/v1/companies?include_total=true&limit=1").await;
+    assert_eq!(page["total"], 1);
+
+    let (_, won) = app
+        .post(
+            "/v1/deals",
+            json!({"title": "Won", "stage_id": "stg_won", "company_id": company["id"]}),
+        )
+        .await;
+    app.post("/v1/deals", json!({"title": "Open"})).await;
+    for (query, total) in [
+        ("include_total=true", 2),
+        ("include_total=true&status=won", 1),
+        ("include_total=true&sort=-expected_close_date&limit=1", 2),
+    ] {
+        let (_, page) = app.get(&format!("/v1/deals?{query}")).await;
+        assert_eq!(page["total"], total, "{query}");
+    }
+
+    for body in ["First call", "Second call"] {
+        app.post(
+            "/v1/activities",
+            json!({"kind": "call", "body": body, "deal_id": won["id"]}),
+        )
+        .await;
+    }
+    let (_, page) = app
+        .get(&format!(
+            "/v1/activities?include_total=true&limit=1&deal_id={}",
+            won["id"].as_str().unwrap()
+        ))
+        .await;
+    assert_eq!(
+        (
+            page["total"].as_i64(),
+            page["data"].as_array().unwrap().len()
+        ),
+        (Some(2), 1)
+    );
 }

@@ -8,6 +8,10 @@ pub struct Page<T> {
     pub data: Vec<T>,
     /// Pass as `cursor` to fetch the next page; null when there are no more results.
     pub next_cursor: Option<String>,
+    /// How many records match the filters across all pages. Present only
+    /// when requested with `include_total=true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<i64>,
 }
 
 /// List order for records sorted by ID, which is creation order.
@@ -38,6 +42,12 @@ impl<T> Page<T> {
         Self {
             data: Vec::new(),
             next_cursor: None,
+            total: None,
         }
+    }
+
+    /// The page with `total` set.
+    pub fn with_total(self, total: Option<i64>) -> Self {
+        Self { total, ..self }
     }
 }

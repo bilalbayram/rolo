@@ -126,6 +126,10 @@ pub struct ActivityQuery {
     /// A user ID, `me`, or `none` for unassigned. With `open=true`, `owner_id=me`
     /// lists your outstanding tasks.
     pub owner_id: Option<String>,
+    /// Also return `total`, the number of records matching the other filters
+    /// across all pages (`cursor` and `limit` don't affect it).
+    #[serde(default)]
+    pub include_total: bool,
     /// 1-200, default 50.
     pub limit: Option<i64>,
     /// `next_cursor` from the previous page.
@@ -167,9 +171,38 @@ pub async fn list(db: &Db, caller: &Principal, query: ActivityQuery) -> Result<P
     let search = match Filter::from_query(query.q) {
         Filter::All => None,
         Filter::Matching(expression) => Some(expression),
-        Filter::Nothing => return Ok(Page::empty()),
+        Filter::Nothing => return Ok(Page::empty().with_total(query.include_total.then_some(0))),
     };
     let owner_id = users::resolve_me(query.owner_id, caller)?;
+    let total = if query.include_total {
+        Some(
+            sqlx::query_scalar!(
+                r#"SELECT count(*) AS "total!: i64" FROM activities
+                   WHERE (?1 IS NULL OR id IN (
+                              SELECT d.entity_id FROM search_index
+                              JOIN search_documents d ON d.rowid = search_index.rowid
+                              WHERE search_index MATCH ?1))
+                     AND (?2 IS NULL OR contact_id = ?2)
+                     AND (?3 IS NULL OR company_id = ?3)
+                     AND (?4 IS NULL OR deal_id = ?4)
+                     AND (?5 IS NULL OR kind = ?5)
+                     AND (?6 IS NULL OR (?6 = (completed_at IS NULL) AND kind = 'task'))
+                     AND (?7 IS NULL OR owner_id = ?7 OR (?7 = ?8 AND owner_id IS NULL))"#,
+                search,
+                query.contact_id,
+                query.company_id,
+                query.deal_id,
+                query.kind,
+                query.open,
+                owner_id,
+                users::NO_OWNER,
+            )
+            .fetch_one(&db.reader)
+            .await?,
+        )
+    } else {
+        None
+    };
     let fetch = limit + 1;
     let rows = sqlx::query_as!(
         Activity,
@@ -208,7 +241,7 @@ pub async fn list(db: &Db, caller: &Principal, query: ActivityQuery) -> Result<P
     )
     .fetch_all(&db.reader)
     .await?;
-    Ok(util::paginate(rows, limit, |a| &a.id))
+    Ok(util::paginate(rows, limit, |a| &a.id).with_total(total))
 }
 
 pub async fn create(db: &Db, caller: &Principal, input: NewActivity) -> Result<Activity> {

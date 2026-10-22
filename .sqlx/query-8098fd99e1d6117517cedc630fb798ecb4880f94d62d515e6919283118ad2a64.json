@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) AS \"total!: i64\" FROM companies\n                   WHERE (?1 IS NULL OR id IN (\n                              SELECT d.entity_id FROM search_index\n                              JOIN search_documents d ON d.rowid = search_index.rowid\n                              WHERE search_index MATCH ?1))\n                     AND (?2 IS NULL OR owner_id = ?2 OR (?2 = ?3 AND owner_id IS NULL))",
+  "describe": {
+    "columns": [
+      {
+        "name": "total!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8098fd99e1d6117517cedc630fb798ecb4880f94d62d515e6919283118ad2a64"
+}

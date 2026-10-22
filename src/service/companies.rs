@@ -75,10 +75,14 @@ pub struct CompanyQuery {
     pub owner_id: Option<String>,
     /// Comma-separated IDs to fetch, at most 100, e.g. `com_a,com_b`. Matches
     /// come back in the order given, in one page; unknown IDs are left out.
-    /// Can't be combined with `limit`, `cursor` or `sort`.
+    /// Can't be combined with `limit`, `cursor`, `sort` or `include_total`.
     pub ids: Option<String>,
     /// `id` (default, oldest first) or `-id` (newest first).
     pub sort: Option<Sort>,
+    /// Also return `total`, the number of records matching the other filters
+    /// across all pages (`cursor` and `limit` don't affect it).
+    #[serde(default)]
+    pub include_total: bool,
     /// 1-200, default 50.
     pub limit: Option<i64>,
     /// `next_cursor` from the previous page.
@@ -107,7 +111,12 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Company>
 pub async fn list(db: &Db, caller: &Principal, query: CompanyQuery) -> Result<Page<Company>> {
     let ids = util::IdList::parse(query.ids)?;
     let limit = match &ids {
-        Some(_) if query.limit.is_some() || query.cursor.is_some() || query.sort.is_some() => {
+        Some(_)
+            if query.limit.is_some()
+                || query.cursor.is_some()
+                || query.sort.is_some()
+                || query.include_total =>
+        {
             return Err(util::IdList::exclusive());
         }
         Some(ids) => ids.count(),
@@ -116,11 +125,30 @@ pub async fn list(db: &Db, caller: &Principal, query: CompanyQuery) -> Result<Pa
     let search = match Filter::from_query(query.q) {
         Filter::All => None,
         Filter::Matching(expression) => Some(expression),
-        Filter::Nothing => return Ok(Page::empty()),
+        Filter::Nothing => return Ok(Page::empty().with_total(query.include_total.then_some(0))),
     };
     let owner_id = users::resolve_me(query.owner_id, caller)?;
     let direction = query.sort.unwrap_or_default().direction();
     let ids_json = ids.as_ref().map(util::IdList::to_json);
+    let total = if query.include_total {
+        Some(
+            sqlx::query_scalar!(
+                r#"SELECT count(*) AS "total!: i64" FROM companies
+                   WHERE (?1 IS NULL OR id IN (
+                              SELECT d.entity_id FROM search_index
+                              JOIN search_documents d ON d.rowid = search_index.rowid
+                              WHERE search_index MATCH ?1))
+                     AND (?2 IS NULL OR owner_id = ?2 OR (?2 = ?3 AND owner_id IS NULL))"#,
+                search,
+                owner_id,
+                users::NO_OWNER,
+            )
+            .fetch_one(&db.reader)
+            .await?,
+        )
+    } else {
+        None
+    };
     let fetch = limit + 1;
     let rows = sqlx::query_as!(
         Company,
@@ -152,7 +180,7 @@ pub async fn list(db: &Db, caller: &Principal, query: CompanyQuery) -> Result<Pa
     if let Some(ids) = &ids {
         page.data = ids.in_order(page.data, |c| &c.id);
     }
-    Ok(page)
+    Ok(page.with_total(total))
 }
 
 pub async fn create(db: &Db, caller: &Principal, input: NewCompany) -> Result<Company> {

@@ -121,10 +121,10 @@ impl IdList {
         Ok(Some(IdList(list)))
     }
 
-    /// An error for combining `ids` with paging or sorting, which don't apply:
-    /// all matches come back in one page, in the order requested.
+    /// An error for combining `ids` with paging, sorting or totals, which
+    /// don't apply: all matches come back in one page, in the order requested.
     pub fn exclusive() -> Error {
-        Error::Invalid("ids can't be combined with limit, cursor or sort".into())
+        Error::Invalid("ids can't be combined with limit, cursor, sort or include_total".into())
     }
 
     pub fn count(&self) -> i64 {
@@ -155,6 +155,7 @@ pub fn paginate<T>(mut rows: Vec<T>, limit: i64, id: impl Fn(&T) -> &str) -> Pag
     Page {
         data: rows,
         next_cursor,
+        total: None,
     }
 }
 

@@ -179,7 +179,7 @@ pub struct DealQuery {
     pub expected_close_to: Option<NaiveDate>,
     /// Comma-separated IDs to fetch, at most 100, e.g. `deal_a,deal_b`. Matches
     /// come back in the order given, in one page; unknown IDs are left out.
-    /// Can't be combined with `limit`, `cursor` or `sort`.
+    /// Can't be combined with `limit`, `cursor`, `sort` or `include_total`.
     pub ids: Option<String>,
     /// Order: `id` (default, oldest first), `-id` (newest first),
     /// `expected_close_date` (soonest first) or `-expected_close_date` (latest
@@ -189,6 +189,10 @@ pub struct DealQuery {
     /// Over REST, pass each as a `custom.<key>=<value>` query parameter.
     #[param(ignore)]
     pub custom: Option<CustomFields>,
+    /// Also return `total`, the number of records matching the other filters
+    /// across all pages (`cursor` and `limit` don't affect it).
+    #[serde(default)]
+    pub include_total: bool,
     /// 1-200, default 50.
     pub limit: Option<i64>,
     /// `next_cursor` from the previous page, with the same `sort`.
@@ -324,7 +328,12 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Deal> {
 pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<Deal>> {
     let ids = util::IdList::parse(query.ids)?;
     let limit = match &ids {
-        Some(_) if query.limit.is_some() || query.cursor.is_some() || query.sort.is_some() => {
+        Some(_)
+            if query.limit.is_some()
+                || query.cursor.is_some()
+                || query.sort.is_some()
+                || query.include_total =>
+        {
             return Err(util::IdList::exclusive());
         }
         Some(ids) => ids.count(),
@@ -334,7 +343,7 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
     let search = match Filter::from_query(query.q) {
         Filter::All => None,
         Filter::Matching(expression) => Some(expression),
-        Filter::Nothing => return Ok(Page::empty()),
+        Filter::Nothing => return Ok(Page::empty().with_total(query.include_total.then_some(0))),
     };
     let owner_id = users::resolve_me(query.owner_id, caller)?;
     let sort = query.sort.unwrap_or_default();
@@ -348,6 +357,44 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
     };
     let order = sort.order();
     let ids_json = ids.as_ref().map(util::IdList::to_json);
+    let total = if query.include_total {
+        Some(
+            sqlx::query_scalar!(
+                r#"SELECT count(*) AS "total!: i64"
+                   FROM deals d JOIN stages s ON s.id = d.stage_id
+                   WHERE (?1 IS NULL OR d.id IN (
+                              SELECT sd.entity_id FROM search_index
+                              JOIN search_documents sd ON sd.rowid = search_index.rowid
+                              WHERE search_index MATCH ?1))
+                     AND (?2 IS NULL OR s.pipeline_id = ?2)
+                     AND (?3 IS NULL OR d.stage_id = ?3)
+                     AND (?4 IS NULL OR s.kind = ?4)
+                     AND (?5 IS NULL OR d.company_id = ?5)
+                     AND (?6 IS NULL OR d.contact_id = ?6)
+                     AND (?7 IS NULL OR d.owner_id = ?7 OR (?7 = ?8 AND d.owner_id IS NULL))
+                     AND (?9 IS NULL OR d.expected_close_date >= ?9)
+                     AND (?10 IS NULL OR d.expected_close_date <= ?10)
+                     AND (?11 IS NULL OR NOT EXISTS (
+                              SELECT 1 FROM json_each(?11) filter
+                              WHERE json_extract(d.custom, '$.' || filter.key) IS NOT filter.value))"#,
+                search,
+                query.pipeline_id,
+                query.stage_id,
+                query.status,
+                query.company_id,
+                query.contact_id,
+                owner_id,
+                users::NO_OWNER,
+                query.expected_close_from,
+                query.expected_close_to,
+                custom,
+            )
+            .fetch_one(&db.reader)
+            .await?,
+        )
+    } else {
+        None
+    };
     let fetch = limit + 1;
     // Sorting by date uses the key coalesce(expected_close_date, undated key)
     // and breaks ties by ID in the same direction; the cursor holds both.
@@ -421,7 +468,7 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
     if let Some(ids) = &ids {
         page.data = ids.in_order(page.data, |d| &d.id);
     }
-    Ok(page)
+    Ok(page.with_total(total))
 }
 
 pub async fn create(db: &Db, caller: &Principal, input: NewDeal) -> Result<Deal> {
