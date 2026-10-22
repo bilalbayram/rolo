@@ -204,7 +204,8 @@ impl RoloMcp {
     }
 
     /// Search contacts by name, email, phone or custom fields, optionally within a
-    /// company or by owner. `phone` finds an exact number in any format.
+    /// company or by owner. `phone` finds an exact number in any format, and
+    /// `custom` matches defined custom fields exactly.
     #[tool(annotations(read_only_hint = true))]
     async fn search_contacts(
         &self,
@@ -392,8 +393,8 @@ impl RoloMcp {
     }
 
     /// Search deals by title, pipeline, stage, status (open/won/lost), company,
-    /// contact, owner or expected close date range, optionally sorted by
-    /// expected close date.
+    /// contact, owner, expected close date range or defined custom fields
+    /// (`custom`, exact match), newest first with sort=-id or by expected close date.
     #[tool(annotations(read_only_hint = true))]
     async fn search_deals(
         &self,

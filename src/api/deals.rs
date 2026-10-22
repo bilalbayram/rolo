@@ -5,7 +5,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::AppState;
-use crate::api::extract::{Body, Id, Params};
+use crate::api::extract::{Body, FilterParams, Id};
 use crate::error::{ErrorBody, Result};
 use crate::service::Page;
 use crate::service::api_keys::Principal;
@@ -24,13 +24,17 @@ pub fn router() -> OpenApiRouter<AppState> {
 /// (newest first) or `expected_close_date` (`-expected_close_date` for latest
 /// first); in the date orders, deals without a date come last. With a date sort, `next_cursor` is
 /// `<date>/<id>` (`none/<id>` for an undated deal); pass it back unchanged.
+///
+/// Filter on defined custom fields with `custom.<key>=<value>` parameters, e.g.
+/// `custom.event_type=dugun_nisan`: exact matches on the normalized value.
 #[utoipa::path(get, path = "/deals", tag = "deals", params(DealQuery),
     responses((status = 200, body = Page<Deal>)))]
 async fn list(
     State(state): State<AppState>,
     Extension(caller): Extension<Principal>,
-    Params(query): Params<DealQuery>,
+    FilterParams(mut query, custom): FilterParams<DealQuery>,
 ) -> Result<Json<Page<Deal>>> {
+    query.custom = custom;
     Ok(Json(deals::list(&state.db, &caller, query).await?))
 }
 

@@ -5,7 +5,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::AppState;
-use crate::api::extract::{Body, Id, Params};
+use crate::api::extract::{Body, FilterParams, Id};
 use crate::error::{ErrorBody, Result};
 use crate::service::Page;
 use crate::service::api_keys::Principal;
@@ -21,13 +21,17 @@ pub fn router() -> OpenApiRouter<AppState> {
 }
 
 /// List contacts
+///
+/// Filter on defined custom fields with `custom.<key>=<value>` parameters, e.g.
+/// `custom.source=instagram`: exact matches on the normalized value.
 #[utoipa::path(get, path = "/contacts", tag = "contacts", params(ContactQuery),
     responses((status = 200, body = Page<Contact>)))]
 async fn list(
     State(state): State<AppState>,
     Extension(caller): Extension<Principal>,
-    Params(query): Params<ContactQuery>,
+    FilterParams(mut query, custom): FilterParams<ContactQuery>,
 ) -> Result<Json<Page<Contact>>> {
+    query.custom = custom;
     Ok(Json(
         contacts::list(&state.db, &caller, state.default_region, query).await?,
     ))

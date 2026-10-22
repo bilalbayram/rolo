@@ -114,6 +114,10 @@ pub struct DealQuery {
     /// `expected_close_date` (soonest first) or `-expected_close_date` (latest
     /// first). In the date orders, deals without an expected close date come last.
     pub sort: Option<DealSort>,
+    /// Exact match on defined custom fields, e.g. `{"event_type": "dugun_nisan"}`.
+    /// Over REST, pass each as a `custom.<key>=<value>` query parameter.
+    #[param(ignore)]
+    pub custom: Option<CustomFields>,
     /// 1-200, default 50.
     pub limit: Option<i64>,
     /// `next_cursor` from the previous page, with the same `sort`.
@@ -248,6 +252,7 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Deal> {
 
 pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<Deal>> {
     let limit = util::clamp_limit(query.limit);
+    let custom = field_definitions::list_filters(db, EntityType::Deal, query.custom).await?;
     let search = match Filter::from_query(query.q) {
         Filter::All => None,
         Filter::Matching(expression) => Some(expression),
@@ -298,11 +303,14 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
                       AND (coalesce(d.expected_close_date, ?13), d.id) > (?14, ?11))
                   OR (?12 = '-date'
                       AND (coalesce(d.expected_close_date, ?13), d.id) < (?14, ?11)))
+             AND (?15 IS NULL OR NOT EXISTS (
+                      SELECT 1 FROM json_each(?15) filter
+                      WHERE json_extract(d.custom, '$.' || filter.key) IS NOT filter.value))
            ORDER BY CASE WHEN ?12 = 'date' THEN coalesce(d.expected_close_date, ?13) END ASC,
                     CASE WHEN ?12 = '-date' THEN coalesce(d.expected_close_date, ?13) END DESC,
                     CASE WHEN ?12 IN ('-id', '-date') THEN d.id END DESC,
                     d.id ASC
-           LIMIT ?15"#,
+           LIMIT ?16"#,
         search,
         query.pipeline_id,
         query.stage_id,
@@ -317,6 +325,7 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
         order,
         sort.undated_key(),
         cursor_key,
+        custom,
         fetch,
     )
     .fetch_all(&db.reader)

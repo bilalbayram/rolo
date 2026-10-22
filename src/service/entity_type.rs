@@ -24,3 +24,15 @@ pub enum EntityType {
     Deal,
     Activity,
 }
+
+impl EntityType {
+    /// Lowercase name, as in the API, e.g. `contact`.
+    pub fn name(self) -> &'static str {
+        match self {
+            EntityType::Contact => "contact",
+            EntityType::Company => "company",
+            EntityType::Deal => "deal",
+            EntityType::Activity => "activity",
+        }
+    }
+}

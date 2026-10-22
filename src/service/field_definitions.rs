@@ -387,10 +387,7 @@ pub async fn validate(
         return Err(Error::Invalid(problems.join("; ")));
     }
 
-    let record_type = serde_json::to_value(entity_type).map_err(anyhow::Error::from)?;
-    let record_type = record_type
-        .as_str()
-        .expect("record types serialize as strings");
+    let record_type = entity_type.name();
     let mut conflicts: Vec<String> = Vec::new();
     for (key, value) in &normalized {
         if value.is_null() || !definition_for(key).is_some_and(|d| d.unique) {
@@ -409,6 +406,66 @@ pub async fn validate(
         return Err(Error::Conflict(conflicts.join("; ")));
     }
     Ok(normalized.into_iter().collect())
+}
+
+/// Exact-match filters on custom fields of `entity_type` for a list query, as
+/// a JSON object of normalized values to pass to `json_each`; `None` without
+/// filters. Every key must be defined. Values may also be strings, as they
+/// come from a query string: `"120"` for a number field, `"true"` for a
+/// boolean. Multiselect fields can't be filtered. All problems are reported
+/// together.
+pub async fn list_filters(
+    db: &Db,
+    entity_type: EntityType,
+    filters: Option<CustomFields>,
+) -> Result<Option<String>> {
+    let Some(filters) = filters.filter(|filters| !filters.is_empty()) else {
+        return Ok(None);
+    };
+    let mut conn = db.reader.acquire().await?;
+    let definitions = list_for(&mut conn, Some(entity_type)).await?;
+    let mut problems: Vec<String> = Vec::new();
+    let mut normalized = serde_json::Map::new();
+    for (key, value) in filters {
+        let Some(definition) = definitions.iter().find(|d| d.key == key) else {
+            problems.push(format!(
+                "custom.{key}: not a custom field defined for {}s",
+                entity_type.name()
+            ));
+            continue;
+        };
+        if definition.field_type == FieldType::Multiselect {
+            problems.push(format!(
+                "custom.{key}: multiselect fields can't be filtered"
+            ));
+            continue;
+        }
+        match check_value(definition, from_query_string(definition.field_type, value)) {
+            Ok(value) => {
+                normalized.insert(key, value);
+            }
+            Err(problem) => problems.push(format!("custom.{key}: {problem}")),
+        }
+    }
+    if !problems.is_empty() {
+        return Err(Error::Invalid(problems.join("; ")));
+    }
+    Ok(Some(Value::Object(normalized).to_string()))
+}
+
+/// `value` as a number or boolean, if it is such a value written as a string.
+fn from_query_string(field_type: FieldType, value: Value) -> Value {
+    let Some(text) = value.as_str().map(str::trim) else {
+        return value;
+    };
+    let parsed = match field_type {
+        FieldType::Number => serde_json::from_str::<Value>(text)
+            .ok()
+            .filter(Value::is_number),
+        FieldType::Boolean => text.parse::<bool>().ok().map(Value::Bool),
+        _ => None,
+    };
+    parsed.unwrap_or(value)
 }
 
 /// The first record of `entity_type` whose custom field `key` equals `value`.

@@ -13,6 +13,10 @@ impl CustomFields {
         self.0.get(key)
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Apply a PATCH: keys set to null are removed, other keys are inserted or replaced.
     pub fn merge(&mut self, update: CustomFields) {
         for (key, value) in update.0 {

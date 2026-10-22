@@ -173,6 +173,10 @@ pub struct ContactQuery {
     pub phone: Option<String>,
     /// `id` (default, oldest first) or `-id` (newest first).
     pub sort: Option<Sort>,
+    /// Exact match on defined custom fields, e.g. `{"source": "instagram"}`.
+    /// Over REST, pass each as a `custom.<key>=<value>` query parameter.
+    #[param(ignore)]
+    pub custom: Option<CustomFields>,
     /// 1-200, default 50.
     pub limit: Option<i64>,
     /// `next_cursor` from the previous page.
@@ -226,6 +230,7 @@ pub async fn list(
     query: ContactQuery,
 ) -> Result<Page<Contact>> {
     let limit = util::clamp_limit(query.limit);
+    let custom = field_definitions::list_filters(db, EntityType::Contact, query.custom).await?;
     let search = match Filter::from_query(query.q) {
         Filter::All => None,
         Filter::Matching(expression) => Some(expression),
@@ -250,8 +255,11 @@ pub async fn list(
              AND (?3 IS NULL OR owner_id = ?3 OR (?3 = ?4 AND owner_id IS NULL))
              AND (?5 IS NULL OR phone = ?5)
              AND (?6 IS NULL OR (?7 = 'asc' AND id > ?6) OR (?7 = 'desc' AND id < ?6))
+             AND (?8 IS NULL OR NOT EXISTS (
+                      SELECT 1 FROM json_each(?8) filter
+                      WHERE json_extract(custom, '$.' || filter.key) IS NOT filter.value))
            ORDER BY CASE WHEN ?7 = 'desc' THEN id END DESC, id ASC
-           LIMIT ?8"#,
+           LIMIT ?9"#,
         search,
         query.company_id,
         owner_id,
@@ -259,6 +267,7 @@ pub async fn list(
         phone,
         query.cursor,
         direction,
+        custom,
         fetch,
     )
     .fetch_all(&db.reader)

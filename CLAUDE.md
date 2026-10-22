@@ -39,7 +39,7 @@ cargo sqlx prepare -- --all-targets # after changing any query or migration; com
 ## Architecture
 
 - **`src/service/`:** business logic. Every CRM mutation runs in one write transaction that also appends to the `events` outbox via `events::record`. Services that create, update or list owned records take the caller (`&Principal`).
-- **`src/api/`:** REST handlers, thin wrappers over services. `extract.rs` provides `Body`, `Params` and `Id`, extractors that return the JSON error format. Query structs use `#[serde(deny_unknown_fields)]`, so `Params` rejects unknown parameters.
+- **`src/api/`:** REST handlers, thin wrappers over services. `extract.rs` provides `Body`, `Params` and `Id`, extractors that return the JSON error format. Query structs use `#[serde(deny_unknown_fields)]`, so `Params` rejects unknown parameters. `FilterParams` does the same and also collects `custom.<key>` parameters for lists with custom field filters.
 - **OpenAPI:** enums used only in query parameters (e.g. `DealSort`) must be listed in `components(schemas(...))` in `src/api/doc.rs`; `tests/openapi.rs` fails on any `$ref` that doesn't resolve.
 - **Idempotency (`src/api/idempotency.rs`):** middleware on the REST router, after auth. A POST with `Idempotency-Key` stores its response in `idempotency_keys` (per API key, 24 hours) and replays it on retries. Handlers need nothing extra.
 - **`src/mcp.rs`:** MCP tools, also thin wrappers. There are no delete tools and no tools to manage webhooks or definitions, on purpose.

@@ -314,3 +314,119 @@ async fn unique_fields_need_a_suitable_type_and_no_existing_duplicates() {
         .await;
     assert_eq!(status, StatusCode::CONFLICT);
 }
+
+fn ids(page: &Value) -> Vec<&str> {
+    page["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| record["id"].as_str().unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn lists_filter_on_custom_fields() {
+    let app = TestApp::new().await;
+    for definition in [
+        json!({"entity_type": "deal", "key": "event_type", "field_type": "select",
+               "options": ["dugun_nisan", "sirket_yemegi"]}),
+        json!({"entity_type": "deal", "key": "mihrabat_inquiry_id", "field_type": "number", "unique": true}),
+        json!({"entity_type": "deal", "key": "vip", "field_type": "boolean"}),
+        json!({"entity_type": "deal", "key": "tags", "field_type": "multiselect", "options": ["a"]}),
+        json!({"entity_type": "contact", "key": "source", "field_type": "text"}),
+    ] {
+        define(&app, definition).await;
+    }
+    let mut deals = Vec::new();
+    for custom in [
+        json!({"event_type": "dugun_nisan", "mihrabat_inquiry_id": 123, "vip": true}),
+        json!({"event_type": "sirket_yemegi", "mihrabat_inquiry_id": 124}),
+        json!({"event_type": "dugun_nisan"}),
+    ] {
+        let (status, deal) = app
+            .post("/v1/deals", json!({"title": "Event", "custom": custom}))
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{deal}");
+        deals.push(deal["id"].as_str().unwrap().to_string());
+    }
+
+    for (query, expected) in [
+        ("custom.event_type=dugun_nisan", vec![&deals[0], &deals[2]]),
+        (
+            "custom.event_type=dugun_nisan&sort=-id",
+            vec![&deals[2], &deals[0]],
+        ),
+        (
+            "custom.event_type=dugun_nisan&custom.mihrabat_inquiry_id=123",
+            vec![&deals[0]],
+        ),
+        ("custom.mihrabat_inquiry_id=124.0", vec![&deals[1]]),
+        ("custom.vip=true", vec![&deals[0]]),
+        ("custom.mihrabat_inquiry_id=999", vec![]),
+    ] {
+        let (status, page) = app.get(&format!("/v1/deals?{query}")).await;
+        assert_eq!(status, StatusCode::OK, "{query}: {page}");
+        assert_eq!(ids(&page), expected, "{query}");
+    }
+
+    for (query, problem) in [
+        (
+            "custom.event_type=gala",
+            "custom.event_type: must be one of",
+        ),
+        (
+            "custom.budget=1",
+            "custom.budget: not a custom field defined for deals",
+        ),
+        (
+            "custom.tags=a",
+            "custom.tags: multiselect fields can't be filtered",
+        ),
+        ("custom.vip=yes", "custom.vip: must be true or false"),
+        (
+            "custom.vip=true&custom.vip=false",
+            "query parameter \"custom.vip\" is given more than once",
+        ),
+        ("custom.=x", "unknown query parameter \"custom.\""),
+        ("customer=x", "unknown query parameter \"customer\""),
+    ] {
+        let (status, body) = app.get(&format!("/v1/deals?{query}")).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{query}");
+        assert!(message(&body).contains(problem), "{query}: {body}");
+    }
+
+    let (_, ada) = app
+        .post(
+            "/v1/contacts",
+            json!({"first_name": "Ada", "custom": {"source": "instagram"}}),
+        )
+        .await;
+    app.post(
+        "/v1/contacts",
+        json!({"first_name": "Grace", "custom": {"source": "web"}}),
+    )
+    .await;
+    let (_, page) = app.get("/v1/contacts?custom.source=instagram").await;
+    assert_eq!(ids(&page), [ada["id"].as_str().unwrap()]);
+    let (status, _) = app.get("/v1/contacts?custom.event_type=x").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // The MCP search tools take the same filters as an object.
+    let result = app
+        .mcp(
+            &app.token,
+            "tools/call",
+            json!({"name": "search_deals", "arguments": {"custom": {"mihrabat_inquiry_id": 123}}}),
+        )
+        .await;
+    assert_ne!(result["isError"], true, "{result}");
+    assert_eq!(ids(&result["structuredContent"]), [deals[0].as_str()]);
+    let result = app
+        .mcp(
+            &app.token,
+            "tools/call",
+            json!({"name": "search_contacts", "arguments": {"custom": {"budget": 1}}}),
+        )
+        .await;
+    assert_eq!(result["isError"], true);
+}
