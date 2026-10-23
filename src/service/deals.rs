@@ -7,12 +7,13 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::api_keys::Principal;
 use super::entity_type::EntityType;
-use super::field_definitions::{self, Write};
+use super::field_definitions::{self, ListCustom, Write};
 use super::pipelines::{self, StageKind};
 use super::{Page, events, users};
 use crate::custom_fields::CustomFields;
 use crate::db::Db;
 use crate::error::{Error, Result};
+use crate::phone::{self, Region};
 use crate::service::search::Filter;
 use crate::util;
 
@@ -164,12 +165,17 @@ pub struct UpsertedDeal {
 #[serde(deny_unknown_fields)]
 pub struct DealQuery {
     /// Full-text search: every word must match as a prefix, e.g. `rollout acm`.
-    /// Searches the title and custom field values.
+    /// Searches the title and custom field values, and the primary contact's
+    /// name, email, phone and other searchable text. A phone number in local
+    /// or international format, e.g. `0532 123 45 67`, also finds deals whose
+    /// primary contact has that number.
     pub q: Option<String>,
     pub pipeline_id: Option<String>,
+    /// A stage ID, or several separated by commas to match any of them.
     pub stage_id: Option<String>,
     pub status: Option<StageKind>,
     pub company_id: Option<String>,
+    /// A contact ID, or several separated by commas to match any of them.
     pub contact_id: Option<String>,
     /// A user ID, `me`, or `none` for deals without an owner.
     pub owner_id: Option<String>,
@@ -186,9 +192,21 @@ pub struct DealQuery {
     /// first). In the date orders, deals without an expected close date come last.
     pub sort: Option<DealSort>,
     /// Exact match on defined custom fields, e.g. `{"event_type": "dugun_nisan"}`.
-    /// Over REST, pass each as a `custom.<key>=<value>` query parameter.
+    /// An array matches any of its values, e.g. `{"guests": [100, 200]}`.
+    /// Over REST, pass each as a `custom.<key>=<value>` query parameter; for
+    /// number, boolean, date, datetime and select fields, separate several
+    /// values with commas to match any of them.
     #[param(ignore)]
     pub custom: Option<CustomFields>,
+    /// Only deals with these custom fields set: comma-separated `custom.<key>`
+    /// names, e.g. `custom.event_type`.
+    pub has: Option<String>,
+    /// Only deals without these custom fields set: comma-separated
+    /// `custom.<key>` names, e.g. `custom.event_type`.
+    pub missing: Option<String>,
+    /// Also return `sums`, the sum of this number field over all matches
+    /// across all pages, e.g. `custom.guests`.
+    pub sum: Option<String>,
     /// Also return `total`, the number of records matching the other filters
     /// across all pages (`cursor` and `limit` don't affect it).
     #[serde(default)]
@@ -325,25 +343,51 @@ pub async fn get(executor: impl SqliteExecutor<'_>, id: &str) -> Result<Deal> {
     .ok_or(Error::NotFound("deal"))
 }
 
-pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<Deal>> {
+pub async fn list(
+    db: &Db,
+    caller: &Principal,
+    region: Region,
+    query: DealQuery,
+) -> Result<Page<Deal>> {
     let ids = util::IdList::parse(query.ids)?;
     let limit = match &ids {
         Some(_)
             if query.limit.is_some()
                 || query.cursor.is_some()
                 || query.sort.is_some()
-                || query.include_total =>
+                || query.include_total
+                || query.sum.is_some() =>
         {
             return Err(util::IdList::exclusive());
         }
         Some(ids) => ids.count(),
         None => util::clamp_limit(query.limit),
     };
-    let custom = field_definitions::list_filters(db, EntityType::Deal, query.custom).await?;
+    let custom = field_definitions::list_params(
+        db,
+        EntityType::Deal,
+        ListCustom {
+            values: query.custom,
+            has: query.has,
+            missing: query.missing,
+            sum: query.sum,
+        },
+    )
+    .await?;
+    let stage_ids = util::json_list(query.stage_id, "stage_id")?;
+    let contact_ids = util::json_list(query.contact_id, "contact_id")?;
+    let search_phone = query
+        .q
+        .as_deref()
+        .and_then(|q| phone::from_search(q, region));
     let search = match Filter::from_query(query.q) {
         Filter::All => None,
         Filter::Matching(expression) => Some(expression),
-        Filter::Nothing => return Ok(Page::empty().with_total(query.include_total.then_some(0))),
+        Filter::Nothing => {
+            return Ok(Page::empty()
+                .with_total(query.include_total.then_some(0))
+                .with_sums(custom.sums(0.0)));
+        }
     };
     let owner_id = users::resolve_me(query.owner_id, caller)?;
     let sort = query.sort.unwrap_or_default();
@@ -357,43 +401,66 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
     };
     let order = sort.order();
     let ids_json = ids.as_ref().map(util::IdList::to_json);
-    let total = if query.include_total {
-        Some(
-            sqlx::query_scalar!(
-                r#"SELECT count(*) AS "total!: i64"
-                   FROM deals d JOIN stages s ON s.id = d.stage_id
-                   WHERE (?1 IS NULL OR d.id IN (
-                              SELECT sd.entity_id FROM search_index
-                              JOIN search_documents sd ON sd.rowid = search_index.rowid
-                              WHERE search_index MATCH ?1))
-                     AND (?2 IS NULL OR s.pipeline_id = ?2)
-                     AND (?3 IS NULL OR d.stage_id = ?3)
-                     AND (?4 IS NULL OR s.kind = ?4)
-                     AND (?5 IS NULL OR d.company_id = ?5)
-                     AND (?6 IS NULL OR d.contact_id = ?6)
-                     AND (?7 IS NULL OR d.owner_id = ?7 OR (?7 = ?8 AND d.owner_id IS NULL))
-                     AND (?9 IS NULL OR d.expected_close_date >= ?9)
-                     AND (?10 IS NULL OR d.expected_close_date <= ?10)
-                     AND (?11 IS NULL OR NOT EXISTS (
-                              SELECT 1 FROM json_each(?11) filter
-                              WHERE json_extract(d.custom, '$.' || filter.key) IS NOT filter.value))"#,
-                search,
-                query.pipeline_id,
-                query.stage_id,
-                query.status,
-                query.company_id,
-                query.contact_id,
-                owner_id,
-                users::NO_OWNER,
-                query.expected_close_from,
-                query.expected_close_to,
-                custom,
-            )
-            .fetch_one(&db.reader)
-            .await?,
+    // A deal matches `q` through its own search document or its primary
+    // contact's, or through the contact's phone number. A custom filter
+    // condition is `{"key", "any": [values]}` or `{"key", "present": bool}`;
+    // see `field_definitions::list_params`.
+    let (total, sums) = if query.include_total || custom.sum.is_some() {
+        let totals = sqlx::query!(
+            r#"SELECT count(*) AS "total!: i64",
+                      total(json_extract(d.custom, '$.' || ?13)) AS "sum!: f64"
+               FROM deals d JOIN stages s ON s.id = d.stage_id
+               WHERE (?1 IS NULL
+                      OR d.id IN (
+                          SELECT sd.entity_id FROM search_index
+                          JOIN search_documents sd ON sd.rowid = search_index.rowid
+                          WHERE search_index MATCH ?1)
+                      OR d.contact_id IN (
+                          SELECT sd.entity_id FROM search_index
+                          JOIN search_documents sd ON sd.rowid = search_index.rowid
+                          WHERE search_index MATCH ?1
+                          UNION ALL
+                          SELECT c.id FROM contacts c WHERE c.phone = ?12))
+                 AND (?2 IS NULL OR s.pipeline_id = ?2)
+                 AND (?3 IS NULL OR d.stage_id IN (SELECT value FROM json_each(?3)))
+                 AND (?4 IS NULL OR s.kind = ?4)
+                 AND (?5 IS NULL OR d.company_id = ?5)
+                 AND (?6 IS NULL OR d.contact_id IN (SELECT value FROM json_each(?6)))
+                 AND (?7 IS NULL OR d.owner_id = ?7 OR (?7 = ?8 AND d.owner_id IS NULL))
+                 AND (?9 IS NULL OR d.expected_close_date >= ?9)
+                 AND (?10 IS NULL OR d.expected_close_date <= ?10)
+                 AND (?11 IS NULL OR NOT EXISTS (
+                          SELECT 1 FROM json_each(?11) filter
+                          WHERE NOT CASE json_extract(filter.value, '$.present')
+                              WHEN 1 THEN json_extract(d.custom, '$.' || json_extract(filter.value, '$.key')) IS NOT NULL
+                              WHEN 0 THEN json_extract(d.custom, '$.' || json_extract(filter.value, '$.key')) IS NULL
+                              ELSE EXISTS (
+                                  SELECT 1 FROM json_each(filter.value, '$.any') alternative
+                                  WHERE alternative.value
+                                        IS json_extract(d.custom, '$.' || json_extract(filter.value, '$.key')))
+                          END))"#,
+            search,
+            query.pipeline_id,
+            stage_ids,
+            query.status,
+            query.company_id,
+            contact_ids,
+            owner_id,
+            users::NO_OWNER,
+            query.expected_close_from,
+            query.expected_close_to,
+            custom.filter,
+            search_phone,
+            custom.sum,
+        )
+        .fetch_one(&db.reader)
+        .await?;
+        (
+            query.include_total.then_some(totals.total),
+            custom.sums(totals.sum),
         )
     } else {
-        None
+        (None, None)
     };
     let fetch = limit + 1;
     // Sorting by date uses the key coalesce(expected_close_date, undated key)
@@ -410,15 +477,22 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
                   d.created_at AS "created_at: DateTime<Utc>",
                   d.updated_at AS "updated_at: DateTime<Utc>"
            FROM deals d JOIN stages s ON s.id = d.stage_id
-           WHERE (?1 IS NULL OR d.id IN (
+           WHERE (?1 IS NULL
+                  OR d.id IN (
                       SELECT sd.entity_id FROM search_index
                       JOIN search_documents sd ON sd.rowid = search_index.rowid
-                      WHERE search_index MATCH ?1))
+                      WHERE search_index MATCH ?1)
+                  OR d.contact_id IN (
+                      SELECT sd.entity_id FROM search_index
+                      JOIN search_documents sd ON sd.rowid = search_index.rowid
+                      WHERE search_index MATCH ?1
+                      UNION ALL
+                      SELECT c.id FROM contacts c WHERE c.phone = ?18))
              AND (?2 IS NULL OR s.pipeline_id = ?2)
-             AND (?3 IS NULL OR d.stage_id = ?3)
+             AND (?3 IS NULL OR d.stage_id IN (SELECT value FROM json_each(?3)))
              AND (?4 IS NULL OR s.kind = ?4)
              AND (?5 IS NULL OR d.company_id = ?5)
-             AND (?6 IS NULL OR d.contact_id = ?6)
+             AND (?6 IS NULL OR d.contact_id IN (SELECT value FROM json_each(?6)))
              AND (?7 IS NULL OR d.owner_id = ?7 OR (?7 = ?8 AND d.owner_id IS NULL))
              AND (?9 IS NULL OR d.expected_close_date >= ?9)
              AND (?10 IS NULL OR d.expected_close_date <= ?10)
@@ -431,7 +505,14 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
                       AND (coalesce(d.expected_close_date, ?13), d.id) < (?14, ?11)))
              AND (?15 IS NULL OR NOT EXISTS (
                       SELECT 1 FROM json_each(?15) filter
-                      WHERE json_extract(d.custom, '$.' || filter.key) IS NOT filter.value))
+                      WHERE NOT CASE json_extract(filter.value, '$.present')
+                          WHEN 1 THEN json_extract(d.custom, '$.' || json_extract(filter.value, '$.key')) IS NOT NULL
+                          WHEN 0 THEN json_extract(d.custom, '$.' || json_extract(filter.value, '$.key')) IS NULL
+                          ELSE EXISTS (
+                              SELECT 1 FROM json_each(filter.value, '$.any') alternative
+                              WHERE alternative.value
+                                    IS json_extract(d.custom, '$.' || json_extract(filter.value, '$.key')))
+                      END))
              AND (?16 IS NULL OR d.id IN (SELECT value FROM json_each(?16)))
            ORDER BY CASE WHEN ?12 = 'date' THEN coalesce(d.expected_close_date, ?13) END ASC,
                     CASE WHEN ?12 = '-date' THEN coalesce(d.expected_close_date, ?13) END DESC,
@@ -440,10 +521,10 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
            LIMIT ?17"#,
         search,
         query.pipeline_id,
-        query.stage_id,
+        stage_ids,
         query.status,
         query.company_id,
-        query.contact_id,
+        contact_ids,
         owner_id,
         users::NO_OWNER,
         query.expected_close_from,
@@ -452,9 +533,10 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
         order,
         sort.undated_key(),
         cursor_key,
-        custom,
+        custom.filter,
         ids_json,
         fetch,
+        search_phone,
     )
     .fetch_all(&db.reader)
     .await?;
@@ -468,7 +550,7 @@ pub async fn list(db: &Db, caller: &Principal, query: DealQuery) -> Result<Page<
     if let Some(ids) = &ids {
         page.data = ids.in_order(page.data, |d| &d.id);
     }
-    Ok(page.with_total(total))
+    Ok(page.with_total(total).with_sums(sums))
 }
 
 pub async fn create(db: &Db, caller: &Principal, input: NewDeal) -> Result<Deal> {

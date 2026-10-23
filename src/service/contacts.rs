@@ -9,7 +9,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::api_keys::Principal;
 use super::entity_type::EntityType;
-use super::field_definitions::{self, Write};
+use super::field_definitions::{self, ListCustom, Write};
 use super::{Page, Sort, events, users};
 use crate::custom_fields::CustomFields;
 use crate::db::Db;
@@ -171,7 +171,9 @@ pub struct UpsertedContact {
 #[serde(deny_unknown_fields)]
 pub struct ContactQuery {
     /// Full-text search: every word must match as a prefix, e.g. `ada acm`.
-    /// Searches all text fields, including custom field values.
+    /// Searches all text fields, including custom field values. A phone
+    /// number in local or international format, e.g. `0532 123 45 67`, also
+    /// finds the contact with that number.
     pub q: Option<String>,
     pub company_id: Option<String>,
     /// A user ID, `me`, or `none` for contacts without an owner.
@@ -186,9 +188,21 @@ pub struct ContactQuery {
     /// `id` (default, oldest first) or `-id` (newest first).
     pub sort: Option<Sort>,
     /// Exact match on defined custom fields, e.g. `{"source": "instagram"}`.
-    /// Over REST, pass each as a `custom.<key>=<value>` query parameter.
+    /// An array matches any of its values, e.g. `{"tier": ["gold", "silver"]}`.
+    /// Over REST, pass each as a `custom.<key>=<value>` query parameter; for
+    /// number, boolean, date, datetime and select fields, separate several
+    /// values with commas to match any of them.
     #[param(ignore)]
     pub custom: Option<CustomFields>,
+    /// Only contacts with these custom fields set: comma-separated
+    /// `custom.<key>` names, e.g. `custom.instagram_id`.
+    pub has: Option<String>,
+    /// Only contacts without these custom fields set: comma-separated
+    /// `custom.<key>` names, e.g. `custom.instagram_id`.
+    pub missing: Option<String>,
+    /// Also return `sums`, the sum of this number field over all matches
+    /// across all pages, e.g. `custom.visits`.
+    pub sum: Option<String>,
     /// Also return `total`, the number of records matching the other filters
     /// across all pages (`cursor` and `limit` don't affect it).
     #[serde(default)]
@@ -251,49 +265,85 @@ pub async fn list(
             if query.limit.is_some()
                 || query.cursor.is_some()
                 || query.sort.is_some()
-                || query.include_total =>
+                || query.include_total
+                || query.sum.is_some() =>
         {
             return Err(util::IdList::exclusive());
         }
         Some(ids) => ids.count(),
         None => util::clamp_limit(query.limit),
     };
-    let custom = field_definitions::list_filters(db, EntityType::Contact, query.custom).await?;
+    let custom = field_definitions::list_params(
+        db,
+        EntityType::Contact,
+        ListCustom {
+            values: query.custom,
+            has: query.has,
+            missing: query.missing,
+            sum: query.sum,
+        },
+    )
+    .await?;
+    let search_phone = query
+        .q
+        .as_deref()
+        .and_then(|q| phone::from_search(q, region));
     let search = match Filter::from_query(query.q) {
         Filter::All => None,
         Filter::Matching(expression) => Some(expression),
-        Filter::Nothing => return Ok(Page::empty().with_total(query.include_total.then_some(0))),
+        Filter::Nothing => {
+            return Ok(Page::empty()
+                .with_total(query.include_total.then_some(0))
+                .with_sums(custom.sums(0.0)));
+        }
     };
     let owner_id = users::resolve_me(query.owner_id, caller)?;
     let phone = normalize_phone(query.phone, region)?;
     let direction = query.sort.unwrap_or_default().direction();
     let ids_json = ids.as_ref().map(util::IdList::to_json);
-    let total = if query.include_total {
-        Some(
-            sqlx::query_scalar!(
-                r#"SELECT count(*) AS "total!: i64" FROM contacts
-                   WHERE (?1 IS NULL OR id IN (
-                              SELECT d.entity_id FROM search_index
-                              JOIN search_documents d ON d.rowid = search_index.rowid
-                              WHERE search_index MATCH ?1))
-                     AND (?2 IS NULL OR company_id = ?2)
-                     AND (?3 IS NULL OR owner_id = ?3 OR (?3 = ?4 AND owner_id IS NULL))
-                     AND (?5 IS NULL OR phone = ?5)
-                     AND (?6 IS NULL OR NOT EXISTS (
-                              SELECT 1 FROM json_each(?6) filter
-                              WHERE json_extract(custom, '$.' || filter.key) IS NOT filter.value))"#,
-                search,
-                query.company_id,
-                owner_id,
-                users::NO_OWNER,
-                phone,
-                custom,
-            )
-            .fetch_one(&db.reader)
-            .await?,
+    // A custom filter condition is `{"key", "any": [values]}` or
+    // `{"key", "present": bool}`; see `field_definitions::list_params`.
+    let (total, sums) = if query.include_total || custom.sum.is_some() {
+        let totals = sqlx::query!(
+            r#"SELECT count(*) AS "total!: i64",
+                      total(json_extract(custom, '$.' || ?8)) AS "sum!: f64"
+               FROM contacts
+               WHERE (?1 IS NULL
+                      OR id IN (
+                          SELECT d.entity_id FROM search_index
+                          JOIN search_documents d ON d.rowid = search_index.rowid
+                          WHERE search_index MATCH ?1)
+                      OR phone = ?7)
+                 AND (?2 IS NULL OR company_id = ?2)
+                 AND (?3 IS NULL OR owner_id = ?3 OR (?3 = ?4 AND owner_id IS NULL))
+                 AND (?5 IS NULL OR phone = ?5)
+                 AND (?6 IS NULL OR NOT EXISTS (
+                          SELECT 1 FROM json_each(?6) filter
+                          WHERE NOT CASE json_extract(filter.value, '$.present')
+                              WHEN 1 THEN json_extract(custom, '$.' || json_extract(filter.value, '$.key')) IS NOT NULL
+                              WHEN 0 THEN json_extract(custom, '$.' || json_extract(filter.value, '$.key')) IS NULL
+                              ELSE EXISTS (
+                                  SELECT 1 FROM json_each(filter.value, '$.any') alternative
+                                  WHERE alternative.value
+                                        IS json_extract(custom, '$.' || json_extract(filter.value, '$.key')))
+                          END))"#,
+            search,
+            query.company_id,
+            owner_id,
+            users::NO_OWNER,
+            phone,
+            custom.filter,
+            search_phone,
+            custom.sum,
+        )
+        .fetch_one(&db.reader)
+        .await?;
+        (
+            query.include_total.then_some(totals.total),
+            custom.sums(totals.sum),
         )
     } else {
-        None
+        (None, None)
     };
     let fetch = limit + 1;
     let rows = sqlx::query_as!(
@@ -303,17 +353,26 @@ pub async fn list(
                   created_at AS "created_at: DateTime<Utc>",
                   updated_at AS "updated_at: DateTime<Utc>"
            FROM contacts
-           WHERE (?1 IS NULL OR id IN (
+           WHERE (?1 IS NULL
+                  OR id IN (
                       SELECT d.entity_id FROM search_index
                       JOIN search_documents d ON d.rowid = search_index.rowid
-                      WHERE search_index MATCH ?1))
+                      WHERE search_index MATCH ?1)
+                  OR phone = ?11)
              AND (?2 IS NULL OR company_id = ?2)
              AND (?3 IS NULL OR owner_id = ?3 OR (?3 = ?4 AND owner_id IS NULL))
              AND (?5 IS NULL OR phone = ?5)
              AND (?6 IS NULL OR (?7 = 'asc' AND id > ?6) OR (?7 = 'desc' AND id < ?6))
              AND (?8 IS NULL OR NOT EXISTS (
                       SELECT 1 FROM json_each(?8) filter
-                      WHERE json_extract(custom, '$.' || filter.key) IS NOT filter.value))
+                      WHERE NOT CASE json_extract(filter.value, '$.present')
+                          WHEN 1 THEN json_extract(custom, '$.' || json_extract(filter.value, '$.key')) IS NOT NULL
+                          WHEN 0 THEN json_extract(custom, '$.' || json_extract(filter.value, '$.key')) IS NULL
+                          ELSE EXISTS (
+                              SELECT 1 FROM json_each(filter.value, '$.any') alternative
+                              WHERE alternative.value
+                                    IS json_extract(custom, '$.' || json_extract(filter.value, '$.key')))
+                      END))
              AND (?9 IS NULL OR id IN (SELECT value FROM json_each(?9)))
            ORDER BY CASE WHEN ?7 = 'desc' THEN id END DESC, id ASC
            LIMIT ?10"#,
@@ -324,9 +383,10 @@ pub async fn list(
         phone,
         query.cursor,
         direction,
-        custom,
+        custom.filter,
         ids_json,
         fetch,
+        search_phone,
     )
     .fetch_all(&db.reader)
     .await?;
@@ -334,7 +394,7 @@ pub async fn list(
     if let Some(ids) = &ids {
         page.data = ids.in_order(page.data, |c| &c.id);
     }
-    Ok(page.with_total(total))
+    Ok(page.with_total(total).with_sums(sums))
 }
 
 pub async fn create(

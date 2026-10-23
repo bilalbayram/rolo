@@ -236,7 +236,9 @@ impl RoloMcp {
                 contact_id: Some(id.clone()),
                 ..Default::default()
             };
-            let deals = deals::list(&self.db, caller, deals_query).await?.data;
+            let deals = deals::list(&self.db, caller, self.default_region, deals_query)
+                .await?
+                .data;
             let activities_query = ActivityQuery {
                 contact_id: Some(id.clone()),
                 ..Default::default()
@@ -328,7 +330,9 @@ impl RoloMcp {
                 company_id: Some(id.clone()),
                 ..Default::default()
             };
-            let deals = deals::list(&self.db, caller, deals_query).await?.data;
+            let deals = deals::list(&self.db, caller, self.default_region, deals_query)
+                .await?
+                .data;
             let activities_query = ActivityQuery {
                 company_id: Some(id.clone()),
                 ..Default::default()
@@ -401,7 +405,7 @@ impl RoloMcp {
         Extension(parts): Extension<Parts>,
         Parameters(query): Parameters<DealQuery>,
     ) -> ToolResult<Page<Deal>> {
-        deals::list(&self.db, caller(&parts)?, query)
+        deals::list(&self.db, caller(&parts)?, self.default_region, query)
             .await
             .map(Json)
             .map_err(fail)

@@ -52,9 +52,36 @@ pub fn normalize(input: &str, region: Region) -> Result<String> {
     Ok(number.format().mode(phonenumber::Mode::E164).to_string())
 }
 
+/// `q` in E.164 form if all of it reads as a phone number valid in `region`,
+/// so that a search for `0532 123 45 67` can find `+905321234567`; `None`
+/// otherwise.
+pub fn from_search(q: &str, region: Region) -> Option<String> {
+    let q = q.trim();
+    let looks_like_phone = q.chars().any(|c| c.is_ascii_digit())
+        && q.chars()
+            .all(|c| c.is_ascii_digit() || " +-().".contains(c));
+    looks_like_phone
+        .then(|| normalize(q, region).ok())
+        .flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_phone_numbers_in_searches() {
+        assert_eq!(
+            from_search("0532 123 45 67", Region::TURKEY).as_deref(),
+            Some("+905321234567")
+        );
+        assert_eq!(
+            from_search("+90 (532) 123-45-67", Region::TURKEY).as_deref(),
+            Some("+905321234567")
+        );
+        assert_eq!(from_search("ayşe 0532", Region::TURKEY), None);
+        assert_eq!(from_search("2027", Region::TURKEY), None);
+    }
 
     #[test]
     fn normalizes_to_e164() {

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -12,6 +14,10 @@ pub struct Page<T> {
     /// when requested with `include_total=true`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total: Option<i64>,
+    /// Sums of number fields over all matches, keyed like the request's `sum`,
+    /// e.g. `{"custom.guests": 1250}`. Present only when requested with `sum`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sums: Option<BTreeMap<String, f64>>,
 }
 
 /// List order for records sorted by ID, which is creation order.
@@ -43,11 +49,17 @@ impl<T> Page<T> {
             data: Vec::new(),
             next_cursor: None,
             total: None,
+            sums: None,
         }
     }
 
     /// The page with `total` set.
     pub fn with_total(self, total: Option<i64>) -> Self {
         Self { total, ..self }
+    }
+
+    /// The page with `sums` set.
+    pub fn with_sums(self, sums: Option<BTreeMap<String, f64>>) -> Self {
+        Self { sums, ..self }
     }
 }

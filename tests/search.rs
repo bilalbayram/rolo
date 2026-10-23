@@ -196,3 +196,63 @@ async fn turkish_dotless_and_dotted_i_match_plain_i() {
     assert_eq!(search(&app, "q=yildiz").await.len(), 1);
     assert!(search(&app, "q=isik").await.is_empty());
 }
+
+#[tokio::test]
+async fn deal_search_also_matches_the_primary_contact() {
+    let app = TestApp::new().await;
+    let (_, ayse) = app
+        .post(
+            "/v1/contacts",
+            json!({"first_name": "Ayşe", "last_name": "Yılmaz", "email": "ayse@example.com",
+                   "phone": "+905321234567"}),
+        )
+        .await;
+    let (_, mehmet) = app
+        .post(
+            "/v1/contacts",
+            json!({"first_name": "Mehmet", "phone": "+905339876543"}),
+        )
+        .await;
+    let mut deals = Vec::new();
+    for (title, contact) in [
+        ("Düğün haziran", &ayse),
+        ("Şirket yemeği", &mehmet),
+        ("Ayşe hanım nişan", &json!({"id": null})),
+    ] {
+        let (status, deal) = app
+            .post(
+                "/v1/deals",
+                json!({"title": title, "contact_id": contact["id"]}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{deal}");
+        deals.push(deal["id"].as_str().unwrap().to_string());
+    }
+
+    for (q, expected) in [
+        // The contact's name, or the deal's own title.
+        ("ayse", vec![&deals[0], &deals[2]]),
+        ("yilmaz", vec![&deals[0]]),
+        ("ayse@example", vec![&deals[0]]),
+        // A phone number in local or international format.
+        ("0532 123 45 67", vec![&deals[0]]),
+        ("05321234567", vec![&deals[0]]),
+        ("%2B90 533 987 65 43", vec![&deals[1]]),
+        ("0532 000 00 00", vec![]),
+        ("yemegi", vec![&deals[1]]),
+    ] {
+        let (status, page) = app
+            .get(&format!(
+                "/v1/deals?q={}&include_total=true",
+                q.replace(' ', "%20")
+            ))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{q}: {page}");
+        assert_eq!(ids(&page), expected, "{q}");
+        assert_eq!(page["total"], expected.len(), "{q}");
+    }
+
+    // Contact search takes local phone numbers too.
+    let (_, page) = app.get("/v1/contacts?q=0532%20123%2045%2067").await;
+    assert_eq!(ids(&page), [ayse["id"].as_str().unwrap()]);
+}

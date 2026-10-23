@@ -113,6 +113,7 @@ assignee):
 - Contact, company, deal and activity lists add `"total"` (the number of records matching all filters, across pages) when you pass `include_total=true`, e.g. for "page 2 of 8". It costs an extra count query, so it's off by default and the field is omitted.
 - Fetch specific contacts, companies or deals with `?ids=con_a,con_b` (at most 100). Matches come back in the order given, in one page; unknown IDs are left out, and `limit`, `cursor`, `sort` and `include_total` can't be combined with it.
 - Contacts, companies and deals list oldest first by default (`sort=id`); `sort=-id` lists newest first, and the cursor follows whichever order you chose. Activities always list newest first.
+- Deal `stage_id` and `contact_id` filters take a comma-separated list to match any of them, e.g. `GET /v1/deals?stage_id=stg_a,stg_b`. A deal's `q` also searches its primary contact's name, email and phone.
 - Deals can be filtered by expected close date, with both ends inclusive: `GET /v1/deals?expected_close_from=2026-11-01&expected_close_to=2026-11-30`. They can also be sorted with `sort=expected_close_date` (soonest first) or `sort=-expected_close_date` (latest first), with deals without a date last. With a date sort, `next_cursor` is `<date>/<id>` (`none/<id>` for an undated deal), so pagination stays stable when dates tie.
 - Errors look like `{"error": {"code": "conflict", "message": "..."}}`.
 - Unknown query parameters are rejected with `422` (`unknown query parameter "ownr_id"`), so a mistyped filter fails loudly instead of returning everything. MCP tools reject unknown arguments the same way.
@@ -174,6 +175,7 @@ with libphonenumber's metadata (the `phonenumber` crate):
 - **Invalid numbers** are rejected with `422`, e.g. `invalid phone number "call me": use international format like +905321234567, or a number valid in TR`.
 - **Unique when present:** a second contact with the same number gets `409` with `a contact with this phone already exists`. Phone is not an identity key; contacts without a phone never clash.
 - **Exact lookup:** `GET /v1/contacts?phone=0532%20123%2045%2067` finds `+905321234567`; the filter is normalized the same way.
+- **Search:** a contact or deal `q` that reads as a phone number, e.g. `q=0532 123 45 67`, also finds the contact with that number and that contact's deals.
 - **Older data:** `rolo serve` rewrites numbers stored before normalization at startup. A number that is invalid, or that another contact already has, moves to `custom.legacy_phone`, so nothing is lost.
 
 ## Custom fields
@@ -190,7 +192,10 @@ curl -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
 - **Validation:** values for defined keys are checked and normalized on every create and update. All problems are reported in one `422`, e.g. `custom.tier: must be one of: gold, silver; custom.nps: must be a number`.
 - **Required fields** must be set when a record is created, and can't be removed later.
 - **Unique fields** (`"unique": true`) can't repeat a value across records of the same type, e.g. an `instagram_id` on contacts. A clash returns `409`, e.g. `custom.instagram_id: another contact has this value`. `unique` is set when the field is defined and can't be changed later. It isn't allowed for `boolean` and `multiselect` fields, or when existing records already share a value.
-- **Filtering:** contact and deal lists match defined fields exactly with `custom.<key>=<value>` parameters, e.g. `GET /v1/deals?custom.event_type=dugun_nisan&custom.mihrabat_inquiry_id=123`. Several filters must all match. Values are normalized as on write, so `120` matches `120.0`, and keys without a definition, multiselect fields and repeated keys return `422`. The `search_contacts` and `search_deals` MCP tools take the same filters as `custom: {"key": value}`.
+- **Filtering:** contact and deal lists match defined fields exactly with `custom.<key>=<value>` parameters, e.g. `GET /v1/deals?custom.event_type=dugun_nisan&custom.mihrabat_inquiry_id=123`. Several filters must all match. Values are normalized as on write, so `120` matches `120.0`, and keys without a definition and repeated keys return `422`. The `search_contacts` and `search_deals` MCP tools take the same filters as `custom: {"key": value}`.
+- **Any of several values:** for number, boolean, date, datetime and select fields, a comma-separated list matches any of its values, e.g. `custom.event_type=dugun_nisan,ozel_davet`. Text, URL and email values can contain commas, so they always match whole, and so does a select option that contains a comma. Over MCP, pass an array: `{"event_type": ["dugun_nisan", "ozel_davet"]}`.
+- **Set or not set:** `has` and `missing` take comma-separated `custom.<key>` names, e.g. `GET /v1/deals?missing=custom.event_type` for deals without an event type. They work for every field type, including multiselect fields, which can't be matched on values.
+- **Sums:** `sum=custom.<key>` on a number field adds `"sums": {"custom.<key>": n}` to the page: the sum over all matches, across pages, e.g. `GET /v1/deals?custom.event_type=dugun_nisan&sum=custom.guests`.
 - **Changes don't apply retroactively.** Existing records aren't revalidated when you change a definition. Deleting a definition keeps the stored values; the key just becomes free-form again. Keys without a definition are always accepted.
 - **For agents:** the `list_custom_fields` MCP tool shows an agent the available fields and their options.
 

@@ -1,6 +1,8 @@
 //! Typed definitions for keys in records' `custom` objects, and validation of
 //! custom field values against them.
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, NaiveDate, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -408,49 +410,166 @@ pub async fn validate(
     Ok(normalized.into_iter().collect())
 }
 
-/// Exact-match filters on custom fields of `entity_type` for a list query, as
-/// a JSON object of normalized values to pass to `json_each`; `None` without
-/// filters. Every key must be defined. Values may also be strings, as they
-/// come from a query string: `"120"` for a number field, `"true"` for a
-/// boolean. Multiselect fields can't be filtered. All problems are reported
-/// together.
-pub async fn list_filters(
+/// The custom field parts of a list query.
+#[derive(Debug, Default)]
+pub struct ListCustom {
+    /// Values to match, by key. An array, or for some field types a
+    /// comma-separated string, matches any of its values.
+    pub values: Option<CustomFields>,
+    /// Comma-separated `custom.<key>` names of fields that must be set.
+    pub has: Option<String>,
+    /// Comma-separated `custom.<key>` names of fields that must not be set.
+    pub missing: Option<String>,
+    /// `custom.<key>` of a number field to add up across the matches.
+    pub sum: Option<String>,
+}
+
+/// [`ListCustom`] checked against the definitions, ready for a list query.
+#[derive(Debug, Default)]
+pub struct ListCustomParams {
+    /// The conditions as a JSON array for `json_each`, `None` without any.
+    /// Each is `{"key": k, "any": [values]}` or `{"key": k, "present": bool}`.
+    pub filter: Option<String>,
+    /// The key of the number field to sum, if any.
+    pub sum: Option<String>,
+}
+
+impl ListCustomParams {
+    /// The `sums` object of a list response for `total`, the sum of the
+    /// field's values over the matches.
+    pub fn sums(&self, total: f64) -> Option<BTreeMap<String, f64>> {
+        self.sum
+            .as_ref()
+            .map(|key| BTreeMap::from([(format!("custom.{key}"), total)]))
+    }
+}
+
+/// Field types whose values can't contain a comma, so that a comma in a query
+/// string value can separate alternatives.
+fn splits_on_comma(field_type: FieldType) -> bool {
+    matches!(
+        field_type,
+        FieldType::Number
+            | FieldType::Boolean
+            | FieldType::Date
+            | FieldType::Datetime
+            | FieldType::Select
+    )
+}
+
+/// Check the custom field parts of a list query on `entity_type` records.
+/// Every key must be defined; values are normalized as when they're stored,
+/// and may be strings as they come from a query string: `"120"` for a number
+/// field, `"true"` for a boolean. Multiselect fields can only be filtered on
+/// whether they're set. All problems are reported together.
+pub async fn list_params(
     db: &Db,
     entity_type: EntityType,
-    filters: Option<CustomFields>,
-) -> Result<Option<String>> {
-    let Some(filters) = filters.filter(|filters| !filters.is_empty()) else {
-        return Ok(None);
-    };
+    query: ListCustom,
+) -> Result<ListCustomParams> {
+    let values = query.values.filter(|values| !values.is_empty());
+    if values.is_none() && query.has.is_none() && query.missing.is_none() && query.sum.is_none() {
+        return Ok(ListCustomParams::default());
+    }
     let mut conn = db.reader.acquire().await?;
     let definitions = list_for(&mut conn, Some(entity_type)).await?;
     let mut problems: Vec<String> = Vec::new();
-    let mut normalized = serde_json::Map::new();
-    for (key, value) in filters {
+    let undefined = |key: &str| {
+        format!(
+            "custom.{key}: not a custom field defined for {}s",
+            entity_type.name()
+        )
+    };
+    let mut conditions: Vec<Value> = Vec::new();
+    for (key, value) in values.into_iter().flatten() {
         let Some(definition) = definitions.iter().find(|d| d.key == key) else {
-            problems.push(format!(
-                "custom.{key}: not a custom field defined for {}s",
-                entity_type.name()
-            ));
+            problems.push(undefined(&key));
             continue;
         };
         if definition.field_type == FieldType::Multiselect {
             problems.push(format!(
-                "custom.{key}: multiselect fields can't be filtered"
+                "custom.{key}: multiselect fields can only be filtered with has or missing"
             ));
             continue;
         }
-        match check_value(definition, from_query_string(definition.field_type, value)) {
-            Ok(value) => {
-                normalized.insert(key, value);
+        let alternatives = match value {
+            Value::Array(items) => items,
+            // An option that itself contains a comma still matches as a whole.
+            Value::String(text)
+                if splits_on_comma(definition.field_type)
+                    && !definition
+                        .options
+                        .0
+                        .iter()
+                        .any(|option| option == text.trim()) =>
+            {
+                text.split(',')
+                    .map(|item| Value::String(item.to_string()))
+                    .collect()
             }
-            Err(problem) => problems.push(format!("custom.{key}: {problem}")),
+            value => vec![value],
+        };
+        if alternatives.is_empty() {
+            problems.push(format!("custom.{key}: needs at least one value"));
+            continue;
+        }
+        let mut any: Vec<Value> = Vec::new();
+        for alternative in alternatives {
+            match check_value(
+                definition,
+                from_query_string(definition.field_type, alternative),
+            ) {
+                Ok(value) => any.push(value),
+                Err(problem) => problems.push(format!("custom.{key}: {problem}")),
+            }
+        }
+        conditions.push(serde_json::json!({"key": key, "any": any}));
+    }
+    for (names, present) in [(query.has, true), (query.missing, false)] {
+        for name in names
+            .iter()
+            .flat_map(|names| names.split(','))
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            let Some(key) = name.strip_prefix("custom.") else {
+                problems.push(format!("{name:?}: expected custom.<key>"));
+                continue;
+            };
+            if definitions.iter().any(|d| d.key == key) {
+                conditions.push(serde_json::json!({"key": key, "present": present}));
+            } else {
+                problems.push(undefined(key));
+            }
         }
     }
+    let sum = match query.sum.as_deref().map(str::trim) {
+        None => None,
+        Some(name) => match name.strip_prefix("custom.") {
+            None => {
+                problems.push(format!("sum {name:?}: expected custom.<key>"));
+                None
+            }
+            Some(key) => match definitions.iter().find(|d| d.key == key) {
+                None => {
+                    problems.push(undefined(key));
+                    None
+                }
+                Some(definition) if definition.field_type != FieldType::Number => {
+                    problems.push(format!("sum custom.{key}: not a number field"));
+                    None
+                }
+                Some(_) => Some(key.to_string()),
+            },
+        },
+    };
     if !problems.is_empty() {
         return Err(Error::Invalid(problems.join("; ")));
     }
-    Ok(Some(Value::Object(normalized).to_string()))
+    Ok(ListCustomParams {
+        filter: (!conditions.is_empty()).then(|| Value::Array(conditions).to_string()),
+        sum,
+    })
 }
 
 /// `value` as a number or boolean, if it is such a value written as a string.

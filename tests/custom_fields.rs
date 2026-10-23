@@ -380,7 +380,7 @@ async fn lists_filter_on_custom_fields() {
         ),
         (
             "custom.tags=a",
-            "custom.tags: multiselect fields can't be filtered",
+            "custom.tags: multiselect fields can only be filtered with has or missing",
         ),
         ("custom.vip=yes", "custom.vip: must be true or false"),
         (
@@ -429,4 +429,286 @@ async fn lists_filter_on_custom_fields() {
         )
         .await;
     assert_eq!(result["isError"], true);
+}
+
+/// Deal fields for the list filter tests: `event_type` (select), `guests`
+/// (number), `details` (text) and `tags` (multiselect).
+async fn define_deal_fields(app: &TestApp) {
+    for definition in [
+        json!({"entity_type": "deal", "key": "event_type", "field_type": "select",
+               "options": ["dugun_nisan", "sirket_yemegi", "ozel_davet", "a,b"]}),
+        json!({"entity_type": "deal", "key": "guests", "field_type": "number"}),
+        json!({"entity_type": "deal", "key": "details", "field_type": "text"}),
+        json!({"entity_type": "deal", "key": "tags", "field_type": "multiselect", "options": ["x"]}),
+    ] {
+        define(app, definition).await;
+    }
+}
+
+async fn create_deal(app: &TestApp, body: Value) -> String {
+    let (status, deal) = app.post("/v1/deals", body).await;
+    assert_eq!(status, StatusCode::CREATED, "{deal}");
+    deal["id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn lists_match_any_of_several_values() {
+    let app = TestApp::new().await;
+    define_deal_fields(&app).await;
+    let (_, ada) = app.post("/v1/contacts", json!({"first_name": "Ada"})).await;
+    let (_, grace) = app
+        .post("/v1/contacts", json!({"first_name": "Grace"}))
+        .await;
+    let (ada, grace) = (ada["id"].as_str().unwrap(), grace["id"].as_str().unwrap());
+    let d = [
+        create_deal(
+            &app,
+            json!({"title": "A", "contact_id": ada,
+                   "custom": {"event_type": "dugun_nisan", "guests": 200, "details": "kır, açık büfe"}}),
+        )
+        .await,
+        create_deal(
+            &app,
+            json!({"title": "B", "contact_id": grace, "stage_id": "stg_qualified",
+                   "custom": {"event_type": "sirket_yemegi", "guests": 80}}),
+        )
+        .await,
+        create_deal(
+            &app,
+            json!({"title": "C", "stage_id": "stg_won", "custom": {"event_type": "ozel_davet"}}),
+        )
+        .await,
+        create_deal(&app, json!({"title": "D", "custom": {"event_type": "a,b"}})).await,
+    ];
+
+    for (query, expected, total) in [
+        (
+            "custom.event_type=dugun_nisan,ozel_davet",
+            vec![&d[0], &d[2]],
+            2,
+        ),
+        (
+            "custom.event_type=sirket_yemegi, ozel_davet",
+            vec![&d[1], &d[2]],
+            2,
+        ),
+        // An option containing a comma still matches as a whole.
+        ("custom.event_type=a,b", vec![&d[3]], 1),
+        ("custom.guests=80,200", vec![&d[0], &d[1]], 2),
+        // Text values may contain commas, so they always match whole.
+        ("custom.details=kır, açık büfe", vec![&d[0]], 1),
+        ("custom.details=kır", vec![], 0),
+        ("stage_id=stg_qualified,stg_won", vec![&d[1], &d[2]], 2),
+        ("stage_id=stg_lead", vec![&d[0], &d[3]], 2),
+        (
+            "stage_id=stg_qualified,stg_won&custom.event_type=ozel_davet,dugun_nisan",
+            vec![&d[2]],
+            1,
+        ),
+        (&format!("contact_id={ada},{grace}"), vec![&d[0], &d[1]], 2),
+        (&format!("contact_id={grace}"), vec![&d[1]], 1),
+    ] {
+        let (status, page) = app
+            .get(&format!(
+                "/v1/deals?{}&include_total=true",
+                query.replace(' ', "%20")
+            ))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{query}: {page}");
+        assert_eq!(ids(&page), expected, "{query}");
+        assert_eq!(page["total"], total, "{query}");
+    }
+
+    for (query, problem) in [
+        (
+            "custom.event_type=dugun_nisan,gala",
+            "custom.event_type: must be one of",
+        ),
+        ("custom.guests=80,many", "custom.guests: must be a number"),
+        ("stage_id=,", "stage_id must list at least one value"),
+    ] {
+        let (status, body) = app.get(&format!("/v1/deals?{query}")).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{query}");
+        assert!(message(&body).contains(problem), "{query}: {body}");
+    }
+
+    // Over MCP, an array matches any of its values.
+    let result = app
+        .mcp(
+            &app.token,
+            "tools/call",
+            json!({"name": "search_deals",
+                   "arguments": {"custom": {"event_type": ["sirket_yemegi", "a,b"]}}}),
+        )
+        .await;
+    assert_ne!(result["isError"], true, "{result}");
+    assert_eq!(
+        ids(&result["structuredContent"]),
+        [d[1].as_str(), d[3].as_str()]
+    );
+}
+
+#[tokio::test]
+async fn lists_filter_on_whether_custom_fields_are_set() {
+    let app = TestApp::new().await;
+    define_deal_fields(&app).await;
+    define(
+        &app,
+        json!({"entity_type": "contact", "key": "instagram_id", "field_type": "text"}),
+    )
+    .await;
+    let d = [
+        create_deal(&app, json!({"title": "Raw lead"})).await,
+        create_deal(
+            &app,
+            json!({"title": "Inquiry", "stage_id": "stg_qualified",
+                   "custom": {"event_type": "dugun_nisan", "tags": ["x"]}}),
+        )
+        .await,
+        create_deal(
+            &app,
+            json!({"title": "Raw lead 2", "custom": {"guests": 50}}),
+        )
+        .await,
+    ];
+    // A field cleared with null is no longer set.
+    let (status, _) = app
+        .patch(
+            &format!("/v1/deals/{}", d[2]),
+            json!({"custom": {"event_type": "ozel_davet"}}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = app
+        .patch(
+            &format!("/v1/deals/{}", d[2]),
+            json!({"custom": {"event_type": null}}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    for (query, expected, total) in [
+        ("missing=custom.event_type", vec![&d[0], &d[2]], 2),
+        ("has=custom.event_type", vec![&d[1]], 1),
+        ("has=custom.tags", vec![&d[1]], 1),
+        ("missing=custom.event_type,custom.guests,", vec![&d[0]], 1),
+        (
+            "missing=custom.event_type&has=custom.guests",
+            vec![&d[2]],
+            1,
+        ),
+        ("missing=custom.event_type&sort=-id&limit=1", vec![&d[2]], 2),
+        (
+            "missing=custom.event_type&stage_id=stg_qualified",
+            vec![],
+            0,
+        ),
+        (
+            "has=custom.event_type&custom.event_type=dugun_nisan",
+            vec![&d[1]],
+            1,
+        ),
+    ] {
+        let (status, page) = app
+            .get(&format!("/v1/deals?{query}&include_total=true"))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{query}: {page}");
+        assert_eq!(ids(&page), expected, "{query}");
+        assert_eq!(page["total"], total, "{query}");
+    }
+
+    for (query, problem) in [
+        (
+            "missing=event_type",
+            "\"event_type\": expected custom.<key>",
+        ),
+        (
+            "has=custom.budget",
+            "custom.budget: not a custom field defined for deals",
+        ),
+        (
+            "has=custom.instagram_id",
+            "custom.instagram_id: not a custom field defined for deals",
+        ),
+    ] {
+        let (status, body) = app.get(&format!("/v1/deals?{query}")).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{query}");
+        assert!(message(&body).contains(problem), "{query}: {body}");
+    }
+
+    let (_, ada) = app
+        .post(
+            "/v1/contacts",
+            json!({"first_name": "Ada", "custom": {"instagram_id": "17841"}}),
+        )
+        .await;
+    let (_, grace) = app
+        .post("/v1/contacts", json!({"first_name": "Grace"}))
+        .await;
+    let (_, page) = app
+        .get("/v1/contacts?has=custom.instagram_id&include_total=true")
+        .await;
+    assert_eq!(
+        (ids(&page), &page["total"]),
+        (vec![ada["id"].as_str().unwrap()], &json!(1))
+    );
+    let (_, page) = app.get("/v1/contacts?missing=custom.instagram_id").await;
+    assert_eq!(ids(&page), [grace["id"].as_str().unwrap()]);
+}
+
+#[tokio::test]
+async fn lists_sum_a_number_field_on_request() {
+    let app = TestApp::new().await;
+    define_deal_fields(&app).await;
+    for custom in [
+        json!({"event_type": "dugun_nisan", "guests": 200}),
+        json!({"event_type": "dugun_nisan", "guests": 150.5}),
+        json!({"event_type": "ozel_davet", "guests": 40}),
+        json!({"event_type": "dugun_nisan"}),
+    ] {
+        create_deal(&app, json!({"title": "Event", "custom": custom})).await;
+    }
+
+    let (_, page) = app.get("/v1/deals?limit=1").await;
+    assert!(!page.as_object().unwrap().contains_key("sums"));
+
+    for (query, sum) in [
+        ("sum=custom.guests", 390.5),
+        (
+            "sum=custom.guests&custom.event_type=dugun_nisan&limit=1",
+            350.5,
+        ),
+        ("sum=custom.guests&missing=custom.guests", 0.0),
+        ("sum=custom.guests&q=nothing", 0.0),
+        ("sum=custom.guests&q=--", 0.0),
+    ] {
+        let (status, page) = app.get(&format!("/v1/deals?{query}")).await;
+        assert_eq!(status, StatusCode::OK, "{query}: {page}");
+        assert_eq!(page["sums"], json!({"custom.guests": sum}), "{query}");
+        assert!(!page.as_object().unwrap().contains_key("total"), "{query}");
+    }
+    let (_, page) = app
+        .get("/v1/deals?sum=custom.guests&include_total=true")
+        .await;
+    assert_eq!(
+        (&page["total"], &page["sums"]["custom.guests"]),
+        (&json!(4), &json!(390.5))
+    );
+
+    for (query, problem) in [
+        (
+            "sum=custom.event_type",
+            "sum custom.event_type: not a number field",
+        ),
+        ("sum=guests", "sum \"guests\": expected custom.<key>"),
+        (
+            "sum=custom.budget",
+            "custom.budget: not a custom field defined for deals",
+        ),
+        ("sum=custom.guests&ids=deal_x", "ids can't be combined"),
+    ] {
+        let (status, body) = app.get(&format!("/v1/deals?{query}")).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{query}");
+        assert!(message(&body).contains(problem), "{query}: {body}");
+    }
 }

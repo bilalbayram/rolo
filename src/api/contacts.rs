@@ -23,7 +23,11 @@ pub fn router() -> OpenApiRouter<AppState> {
 /// List contacts
 ///
 /// Filter on defined custom fields with `custom.<key>=<value>` parameters, e.g.
-/// `custom.source=instagram`: exact matches on the normalized value.
+/// `custom.source=instagram`: exact matches on the normalized value. For
+/// number, boolean, date, datetime and select fields, a comma-separated list
+/// matches any of its values. `has` and `missing` filter on whether custom
+/// fields are set, e.g. `missing=custom.instagram_id`. `sum=custom.<key>` adds
+/// up a number field over all matches.
 #[utoipa::path(get, path = "/contacts", tag = "contacts", params(ContactQuery),
     responses((status = 200, body = Page<Contact>)))]
 async fn list(

@@ -143,6 +143,25 @@ impl IdList {
     }
 }
 
+/// The values of a filter that takes a comma-separated list, e.g.
+/// `stage_id=stg_a,stg_b`, as a JSON array for `json_each`; `None` if absent.
+pub fn json_list(values: Option<String>, name: &str) -> Result<Option<String>> {
+    let Some(values) = values else {
+        return Ok(None);
+    };
+    let list: Vec<&str> = values
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect();
+    if list.is_empty() {
+        return Err(Error::Invalid(format!(
+            "{name} must list at least one value"
+        )));
+    }
+    Ok(Some(serde_json::Value::from(list).to_string()))
+}
+
 /// Build a page from `limit + 1` fetched rows; the extra row signals a next page.
 pub fn paginate<T>(mut rows: Vec<T>, limit: i64, id: impl Fn(&T) -> &str) -> Page<T> {
     let limit = usize::try_from(limit).expect("limit is clamped to a positive value");
@@ -156,6 +175,7 @@ pub fn paginate<T>(mut rows: Vec<T>, limit: i64, id: impl Fn(&T) -> &str) -> Pag
         data: rows,
         next_cursor,
         total: None,
+        sums: None,
     }
 }
 

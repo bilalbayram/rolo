@@ -26,8 +26,16 @@ pub fn router() -> OpenApiRouter<AppState> {
 /// first); in the date orders, deals without a date come last. With a date sort, `next_cursor` is
 /// `<date>/<id>` (`none/<id>` for an undated deal); pass it back unchanged.
 ///
+/// `stage_id` and `contact_id` take a comma-separated list to match any of
+/// them. `q` also searches the primary contact, including by phone number.
+///
 /// Filter on defined custom fields with `custom.<key>=<value>` parameters, e.g.
-/// `custom.event_type=dugun_nisan`: exact matches on the normalized value.
+/// `custom.event_type=dugun_nisan`: exact matches on the normalized value. For
+/// number, boolean, date, datetime and select fields, a comma-separated list
+/// matches any of its values, e.g. `custom.event_type=dugun_nisan,ozel_davet`.
+/// `has` and `missing` filter on whether custom fields are set, e.g.
+/// `missing=custom.event_type`. `sum=custom.<key>` adds up a number field over
+/// all matches, e.g. `sum=custom.guests` returns `"sums": {"custom.guests": 1250}`.
 #[utoipa::path(get, path = "/deals", tag = "deals", params(DealQuery),
     responses((status = 200, body = Page<Deal>)))]
 async fn list(
@@ -36,7 +44,9 @@ async fn list(
     FilterParams(mut query, custom): FilterParams<DealQuery>,
 ) -> Result<Json<Page<Deal>>> {
     query.custom = custom;
-    Ok(Json(deals::list(&state.db, &caller, query).await?))
+    Ok(Json(
+        deals::list(&state.db, &caller, state.default_region, query).await?,
+    ))
 }
 
 /// Create a deal
